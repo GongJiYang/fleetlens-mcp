@@ -34,36 +34,6 @@ import {
   type Dataset
 } from "../../shared/dist/index.js";
 import {
-  addChart,
-  addChartToDashboard,
-  createChartFromDataset,
-  createDashboard,
-  createDashboardFromTemplate,
-  dashboardNl,
-  deleteDashboard,
-  deleteChart,
-  describeDataset,
-  listDashboardsFiltered,
-  listDatasetContent,
-  listDatasets,
-  listTemplates,
-  listThemePresets,
-  snapshotDashboardTool,
-  listDashboardVersions,
-  restoreDashboardVersion,
-  undoDashboard,
-  restoreDeletedDashboard,
-  registerDataset,
-  updateDataset,
-  resetChartPresentation,
-  setChartPresentation,
-  setChartTheme,
-  updateDashboard,
-  updateDashboardFilters,
-  listDashboardFilters,
-  restoreDatasetSnapshot
-} from "./storage.js";
-import {
   allowAllPolicyAdapter,
   createScopePolicyAdapter,
   isWorkspaceRole,
@@ -71,8 +41,10 @@ import {
   type PolicyAction,
   type PolicyAdapter,
   type PolicyResource,
-  type RequestContext
+  type RequestContext,
+  type WorkspaceDataBackend
 } from "../../core/dist/index.js";
+import { localWorkspaceStorage } from "./local-workspace-storage.js";
 
 export type ToolMode = "full" | "lite" | "ultra-lite";
 type ToolExtra = RequestHandlerExtra<ServerRequest, ServerNotification>;
@@ -377,11 +349,13 @@ export function createLuminonMcpServer(options?: {
   requestSource?: RequestSource;
   policyAdapter?: PolicyAdapter;
   enforcePolicy?: boolean;
+  backend?: WorkspaceDataBackend;
 }): McpServer {
   const toolMode = options?.toolMode ?? resolveToolMode(process.env.LUMINON_MCP_MODE);
   const requestSource = options?.requestSource ?? "local_cli";
   const enforcePolicy = options?.enforcePolicy ?? false;
   const policyAdapter = options?.policyAdapter ?? (enforcePolicy ? createScopePolicyAdapter() : allowAllPolicyAdapter);
+  const backend = options?.backend ?? localWorkspaceStorage;
   const server = new McpServer({
     name: "mcp-dashboard",
     version: "0.2.0"
@@ -402,7 +376,7 @@ export function createLuminonMcpServer(options?: {
           extra,
           { enforcePolicy, requestSource }
         );
-        const dashboard = await createDashboard(applyCreationContext(input, context));
+        const dashboard = await backend.createDashboard(applyCreationContext(input, context), context);
         return dashboardResponse(dashboard);
       }
     );
@@ -416,14 +390,14 @@ export function createLuminonMcpServer(options?: {
         input: updateDashboardInputSchema
       },
       async ({ input }, extra) => {
-        await authorizeRequest(
+        const context = await authorizeRequest(
           policyAdapter,
           "dashboard.write",
           { kind: "dashboard", dashboardId: input.dashboardId },
           extra,
           { enforcePolicy, requestSource }
         );
-        const dashboard = await updateDashboard(input);
+        const dashboard = await backend.updateDashboard(input, context);
         return dashboardResponse(dashboard);
       }
     );
@@ -437,14 +411,14 @@ export function createLuminonMcpServer(options?: {
         input: addChartInputSchema
       },
       async ({ input }, extra) => {
-        await authorizeRequest(
+        const context = await authorizeRequest(
           policyAdapter,
           "dashboard.write",
           { kind: "dashboard", dashboardId: input.dashboardId },
           extra,
           { enforcePolicy, requestSource }
         );
-        const dashboard = await addChart(input);
+        const dashboard = await backend.addChart(input, context);
         return dashboardResponse(dashboard, { chart: summarizeChart(input.chart) });
       }
     );
@@ -458,14 +432,14 @@ export function createLuminonMcpServer(options?: {
         input: addChartToDashboardInputSchema
       },
       async ({ input }, extra) => {
-        await authorizeRequest(
+        const context = await authorizeRequest(
           policyAdapter,
           "dashboard.write",
           { kind: "dashboard", dashboardId: input.dashboardId },
           extra,
           { enforcePolicy, requestSource }
         );
-        const dashboard = await addChartToDashboard(input);
+        const dashboard = await backend.addChartToDashboard(input, context);
         return dashboardResponse(dashboard, { chart: summarizeChart(input.chart) });
       }
     );
@@ -479,14 +453,14 @@ export function createLuminonMcpServer(options?: {
         input: deleteChartInputSchema
       },
       async ({ input }, extra) => {
-        await authorizeRequest(
+        const context = await authorizeRequest(
           policyAdapter,
           "dashboard.write",
           { kind: "dashboard", dashboardId: input.dashboardId },
           extra,
           { enforcePolicy, requestSource }
         );
-        const dashboard = await deleteChart(input);
+        const dashboard = await backend.deleteChart(input, context);
         return dashboardResponse(dashboard, { deletedChartId: input.chartId });
       }
     );
@@ -500,14 +474,14 @@ export function createLuminonMcpServer(options?: {
         input: deleteDashboardInputSchema
       },
       async ({ input }, extra) => {
-        await authorizeRequest(
+        const context = await authorizeRequest(
           policyAdapter,
           "dashboard.write",
           { kind: "dashboard", dashboardId: input.dashboardId },
           extra,
           { enforcePolicy, requestSource }
         );
-        const result = await deleteDashboard(input);
+        const result = await backend.deleteDashboard(input, context);
         return jsonResponse({ ok: true, ...result });
       }
     );
@@ -521,14 +495,14 @@ export function createLuminonMcpServer(options?: {
         input: listDashboardsInputSchema
       },
       async ({ input }, extra) => {
-        await authorizeRequest(
+        const context = await authorizeRequest(
           policyAdapter,
           "dashboard.read",
           { kind: "dashboard" },
           extra,
           { enforcePolicy, requestSource }
         );
-        const { dashboards } = await listDashboardsFiltered(input);
+        const { dashboards } = await backend.listDashboardsFiltered(input, context);
         const rows = dashboards.map((dashboard) => {
           if ("payload" in dashboard) {
             return [
@@ -554,14 +528,14 @@ export function createLuminonMcpServer(options?: {
 
   if (toolEnabled("list_theme_presets", toolMode)) {
     server.tool("list_theme_presets", "List available chart theme presets.", async (extra) => {
-      await authorizeRequest(
+      const context = await authorizeRequest(
         policyAdapter,
         "content.read",
         { kind: "content" },
         extra,
         { enforcePolicy, requestSource }
       );
-      const themes = await listThemePresets();
+      const themes = await backend.listThemePresets(context);
       const table = toTable(
         ["theme", "description"],
         themes.map((theme) => [theme.id, theme.description])
@@ -572,14 +546,14 @@ export function createLuminonMcpServer(options?: {
 
   if (toolEnabled("list_templates", toolMode)) {
     server.tool("list_templates", "List built-in dashboard templates and their default datasets.", async (extra) => {
-      await authorizeRequest(
+      const context = await authorizeRequest(
         policyAdapter,
         "content.read",
         { kind: "content" },
         extra,
         { enforcePolicy, requestSource }
       );
-      const templates = await listTemplates();
+      const templates = await backend.listTemplates(context);
       const table = toTable(
         ["id", "name", "dataset", "charts", "filters"],
         templates.map((template) => [
@@ -602,14 +576,14 @@ export function createLuminonMcpServer(options?: {
         input: createSnapshotInputSchema
       },
       async ({ input }, extra) => {
-        await authorizeRequest(
+        const context = await authorizeRequest(
           policyAdapter,
           "dashboard.write",
           { kind: "dashboard", dashboardId: input.dashboardId },
           extra,
           { enforcePolicy, requestSource }
         );
-        const snapshot = await snapshotDashboardTool(input);
+        const snapshot = await backend.snapshotDashboard(input, context);
         return jsonResponse({ ok: true, snapshot: summarizeSnapshot(snapshot) });
       }
     );
@@ -623,14 +597,14 @@ export function createLuminonMcpServer(options?: {
         input: listDashboardVersionsInputSchema
       },
       async ({ input }, extra) => {
-        await authorizeRequest(
+        const context = await authorizeRequest(
           policyAdapter,
           "dashboard.read",
           { kind: "dashboard", dashboardId: input.dashboardId },
           extra,
           { enforcePolicy, requestSource }
         );
-        const snapshots = await listDashboardVersions(input);
+        const snapshots = await backend.listDashboardVersions(input, context);
         const table = toTable(
           ["snapshotId", "createdAt", "comment"],
           snapshots.map((snapshot) => [snapshot.id, snapshot.createdAt, snapshot.comment ?? ""])
@@ -648,14 +622,14 @@ export function createLuminonMcpServer(options?: {
         input: restoreDashboardVersionInputSchema
       },
       async ({ input }, extra) => {
-        await authorizeRequest(
+        const context = await authorizeRequest(
           policyAdapter,
           "dashboard.write",
           { kind: "dashboard", dashboardId: input.dashboardId },
           extra,
           { enforcePolicy, requestSource }
         );
-        const dashboard = await restoreDashboardVersion(input);
+        const dashboard = await backend.restoreDashboardVersion(input, context);
         return dashboardResponse(dashboard);
       }
     );
@@ -669,14 +643,14 @@ export function createLuminonMcpServer(options?: {
         input: undoDashboardInputSchema
       },
       async ({ input }, extra) => {
-        await authorizeRequest(
+        const context = await authorizeRequest(
           policyAdapter,
           "dashboard.write",
           { kind: "dashboard", dashboardId: input.dashboardId },
           extra,
           { enforcePolicy, requestSource }
         );
-        const dashboard = await undoDashboard(input);
+        const dashboard = await backend.undoDashboard(input, context);
         return dashboardResponse(dashboard);
       }
     );
@@ -690,14 +664,14 @@ export function createLuminonMcpServer(options?: {
         input: restoreDeletedDashboardInputSchema
       },
       async ({ input }, extra) => {
-        await authorizeRequest(
+        const context = await authorizeRequest(
           policyAdapter,
           "dashboard.write",
-          { kind: "dashboard", dashboardId: input.dashboardId, workspaceId: input.newId },
+          { kind: "dashboard", dashboardId: input.dashboardId },
           extra,
           { enforcePolicy, requestSource }
         );
-        const dashboard = await restoreDeletedDashboard(input);
+        const dashboard = await backend.restoreDeletedDashboard(input, context);
         return dashboardResponse(dashboard);
       }
     );
@@ -718,7 +692,7 @@ export function createLuminonMcpServer(options?: {
           extra,
           { enforcePolicy, requestSource }
         );
-        const dashboard = await createDashboardFromTemplate(applyCreationContext(input, context));
+        const dashboard = await backend.createDashboardFromTemplate(applyCreationContext(input, context), context);
         return dashboardResponse(dashboard);
       }
     );
@@ -739,7 +713,7 @@ export function createLuminonMcpServer(options?: {
           extra,
           { enforcePolicy, requestSource }
         );
-        const result = await dashboardNl(applyCreationContext(input, context));
+        const result = await backend.dashboardNl(applyCreationContext(input, context), context);
         return jsonResponse({
           ok: true,
           action: result.action,
@@ -758,14 +732,14 @@ export function createLuminonMcpServer(options?: {
         input: setChartThemeInputSchema
       },
       async ({ input }, extra) => {
-        await authorizeRequest(
+        const context = await authorizeRequest(
           policyAdapter,
           "dashboard.write",
           { kind: "dashboard", dashboardId: input.dashboardId },
           extra,
           { enforcePolicy, requestSource }
         );
-        const dashboard = await setChartTheme(input);
+        const dashboard = await backend.setChartTheme(input, context);
         return dashboardResponse(dashboard, { chartId: input.chartId, themePreset: input.themePreset });
       }
     );
@@ -779,14 +753,14 @@ export function createLuminonMcpServer(options?: {
         input: setChartPresentationInputSchema
       },
       async ({ input }, extra) => {
-        await authorizeRequest(
+        const context = await authorizeRequest(
           policyAdapter,
           "dashboard.write",
           { kind: "dashboard", dashboardId: input.dashboardId },
           extra,
           { enforcePolicy, requestSource }
         );
-        const dashboard = await setChartPresentation(input);
+        const dashboard = await backend.setChartPresentation(input, context);
         return dashboardResponse(dashboard, { chartId: input.chartId });
       }
     );
@@ -800,14 +774,14 @@ export function createLuminonMcpServer(options?: {
         input: resetChartPresentationInputSchema
       },
       async ({ input }, extra) => {
-        await authorizeRequest(
+        const context = await authorizeRequest(
           policyAdapter,
           "dashboard.write",
           { kind: "dashboard", dashboardId: input.dashboardId },
           extra,
           { enforcePolicy, requestSource }
         );
-        const dashboard = await resetChartPresentation(input);
+        const dashboard = await backend.resetChartPresentation(input, context);
         return dashboardResponse(dashboard, { chartId: input.chartId });
       }
     );
@@ -828,7 +802,7 @@ export function createLuminonMcpServer(options?: {
           extra,
           { enforcePolicy, requestSource }
         );
-        const dataset = await registerDataset(applyCreationContext(input, context));
+        const dataset = await backend.registerDataset(applyCreationContext(input, context), context);
         return datasetResponse(dataset);
       }
     );
@@ -842,14 +816,14 @@ export function createLuminonMcpServer(options?: {
         input: updateDatasetInputSchema
       },
       async ({ input }, extra) => {
-        await authorizeRequest(
+        const context = await authorizeRequest(
           policyAdapter,
           "dataset.write",
           { kind: "dataset", datasetId: input.datasetId },
           extra,
           { enforcePolicy, requestSource }
         );
-        const dataset = await updateDataset(input);
+        const dataset = await backend.updateDataset(input, context);
         return datasetResponse(dataset);
       }
     );
@@ -863,14 +837,14 @@ export function createLuminonMcpServer(options?: {
         input: restoreDatasetSnapshotInputSchema
       },
       async ({ input }, extra) => {
-        await authorizeRequest(
+        const context = await authorizeRequest(
           policyAdapter,
           "dataset.write",
           { kind: "dataset", datasetId: input.datasetId },
           extra,
           { enforcePolicy, requestSource }
         );
-        const dataset = await restoreDatasetSnapshot(input);
+        const dataset = await backend.restoreDatasetSnapshot(input, context);
         return datasetResponse(dataset);
       }
     );
@@ -878,14 +852,14 @@ export function createLuminonMcpServer(options?: {
 
   if (toolEnabled("list_datasets", toolMode)) {
     server.tool("list_datasets", "List all datasets.", async (extra) => {
-      await authorizeRequest(
+      const context = await authorizeRequest(
         policyAdapter,
         "dataset.read",
         { kind: "dataset" },
         extra,
         { enforcePolicy, requestSource }
       );
-      const datasets = await listDatasets();
+      const datasets = await backend.listDatasets(context);
       const table = toTable(
         ["id", "name", "rows", "columns", "readOnly", "updatedAt"],
         datasets.map((dataset) => [
@@ -909,14 +883,14 @@ export function createLuminonMcpServer(options?: {
         input: listDatasetContentInputSchema
       },
       async ({ input }, extra) => {
-        await authorizeRequest(
+        const context = await authorizeRequest(
           policyAdapter,
           "dataset.read",
           { kind: "dataset", datasetId: input.datasetId },
           extra,
           { enforcePolicy, requestSource }
         );
-        const result = await listDatasetContent(input);
+        const result = await backend.listDatasetContent(input, context);
         const headers = result.columns;
         const rows = result.rows.map((row) => headers.map((header) => String(row[header] ?? "")));
         const table = toTable(headers, rows);
@@ -934,14 +908,14 @@ export function createLuminonMcpServer(options?: {
         input: describeDatasetInputSchema
       },
       async ({ input }, extra) => {
-        await authorizeRequest(
+        const context = await authorizeRequest(
           policyAdapter,
           "dataset.read",
           { kind: "dataset", datasetId: input.datasetId },
           extra,
           { enforcePolicy, requestSource }
         );
-        const dataset = await describeDataset(input);
+        const dataset = await backend.describeDataset(input, context);
         return jsonResponse({
           ok: true,
           dataset: {
@@ -964,14 +938,14 @@ export function createLuminonMcpServer(options?: {
         input: createChartFromDatasetInputSchema
       },
       async ({ input }, extra) => {
-        await authorizeRequest(
+        const context = await authorizeRequest(
           policyAdapter,
           "dashboard.write",
           { kind: "dashboard", dashboardId: input.dashboardId },
           extra,
           { enforcePolicy, requestSource }
         );
-        const dashboard = await createChartFromDataset(input);
+        const dashboard = await backend.createChartFromDataset(input, context);
         return dashboardResponse(dashboard);
       }
     );
@@ -985,14 +959,14 @@ export function createLuminonMcpServer(options?: {
         input: listDashboardFiltersInputSchema
       },
       async ({ input }, extra) => {
-        await authorizeRequest(
+        const context = await authorizeRequest(
           policyAdapter,
           "dashboard.read",
           { kind: "dashboard", dashboardId: input.dashboardId },
           extra,
           { enforcePolicy, requestSource }
         );
-        const result = await listDashboardFilters(input);
+        const result = await backend.listDashboardFilters(input, context);
         return textResponse(filtersTable(result.filters));
       }
     );
@@ -1006,14 +980,14 @@ export function createLuminonMcpServer(options?: {
         input: updateDashboardFiltersInputSchema
       },
       async ({ input }, extra) => {
-        await authorizeRequest(
+        const context = await authorizeRequest(
           policyAdapter,
           "dashboard.write",
           { kind: "dashboard", dashboardId: input.dashboardId },
           extra,
           { enforcePolicy, requestSource }
         );
-        const dashboard = await updateDashboardFilters(input);
+        const dashboard = await backend.updateDashboardFilters(input, context);
         return jsonResponse({
           ok: true,
           dashboard: summarizeDashboard(dashboard),

@@ -1,4 +1,36 @@
-import type { Dashboard, Dataset, Template, ThemePreset } from "../../shared/dist/index.js";
+import type {
+  AddChartInput,
+  AddChartToDashboardInput,
+  CreateChartFromDatasetInput,
+  CreateDashboardFromTemplateInput,
+  CreateDashboardInput,
+  CreateSnapshotInput,
+  Dashboard,
+  DashboardFilter,
+  DashboardNlInput,
+  DashboardSnapshot,
+  Dataset,
+  DeletedDashboard,
+  DeleteChartInput,
+  DeleteDashboardInput,
+  DescribeDatasetInput,
+  ListDashboardFiltersInput,
+  ListDashboardVersionsInput,
+  ListDashboardsInput,
+  ListDatasetContentInput,
+  RegisterDatasetInput,
+  ResetChartPresentationInput,
+  RestoreDashboardVersionInput,
+  RestoreDatasetSnapshotInput,
+  RestoreDeletedDashboardInput,
+  SetChartPresentationInput,
+  SetChartThemeInput,
+  Template,
+  ThemePreset,
+  UndoDashboardInput,
+  UpdateDashboardFiltersInput,
+  UpdateDashboardInput
+} from "../../shared/dist/index.js";
 
 export type DataPaths = {
   baseDir: string;
@@ -48,16 +80,82 @@ export type UpdateDatasetInput = {
   allowSchemaChange?: boolean;
 };
 
-export interface LocalWorkspaceStorage {
+export type DescribeDatasetResult = {
+  id: string;
+  name: string;
+  columns: string[];
+  rowCount: number;
+  sampleRows: Array<Record<string, unknown>>;
+};
+
+export type ListDatasetContentResult = {
+  datasetId: string;
+  columns: string[];
+  rows: Array<Record<string, unknown>>;
+  totalRows: number;
+  returnedRows: number;
+  truncated: boolean;
+};
+
+export type ListDashboardsResult = {
+  status: ListDashboardsInput["status"];
+  dashboards: Array<Dashboard | DeletedDashboard>;
+};
+
+export type DeleteDashboardResult = {
+  deletedDashboardId: string;
+};
+
+export type ListThemePresetsResult = Array<{ id: ThemePreset; description: string }>;
+
+export type DashboardNlResult = {
+  action: string;
+  message: string;
+  result?: unknown;
+};
+
+export type ListDashboardFiltersResult = {
+  filters: DashboardFilter[];
+};
+
+export interface WorkspaceDataBackend {
   ensureUserDataFiles(): Promise<void>;
   getDataPaths(): DataPaths;
   listDashboards(context?: RequestContext): Promise<Dashboard[]>;
+  listDashboardsFiltered(input: ListDashboardsInput, context?: RequestContext): Promise<ListDashboardsResult>;
+  createDashboard(input: CreateDashboardInput, context?: RequestContext): Promise<Dashboard>;
+  addChart(input: AddChartInput, context?: RequestContext): Promise<Dashboard>;
+  addChartToDashboard(input: AddChartToDashboardInput, context?: RequestContext): Promise<Dashboard>;
+  updateDashboard(input: UpdateDashboardInput, context?: RequestContext): Promise<Dashboard>;
+  deleteChart(input: DeleteChartInput, context?: RequestContext): Promise<Dashboard>;
+  deleteDashboard(input: DeleteDashboardInput, context?: RequestContext): Promise<DeleteDashboardResult>;
+  listThemePresets(context?: RequestContext): Promise<ListThemePresetsResult>;
+  listTemplates(context?: RequestContext): Promise<Template[]>;
+  snapshotDashboard(input: CreateSnapshotInput, context?: RequestContext): Promise<DashboardSnapshot>;
+  listDashboardVersions(input: ListDashboardVersionsInput, context?: RequestContext): Promise<DashboardSnapshot[]>;
+  restoreDashboardVersion(input: RestoreDashboardVersionInput, context?: RequestContext): Promise<Dashboard>;
+  undoDashboard(input: UndoDashboardInput, context?: RequestContext): Promise<Dashboard>;
+  restoreDeletedDashboard(input: RestoreDeletedDashboardInput, context?: RequestContext): Promise<Dashboard>;
+  createDashboardFromTemplate(input: CreateDashboardFromTemplateInput, context?: RequestContext): Promise<Dashboard>;
+  dashboardNl(input: DashboardNlInput, context?: RequestContext): Promise<DashboardNlResult>;
+  setChartTheme(input: SetChartThemeInput, context?: RequestContext): Promise<Dashboard>;
+  setChartPresentation(input: SetChartPresentationInput, context?: RequestContext): Promise<Dashboard>;
+  resetChartPresentation(input: ResetChartPresentationInput, context?: RequestContext): Promise<Dashboard>;
+  registerDataset(input: RegisterDatasetInput, context?: RequestContext): Promise<Dataset>;
   listDatasets(context?: RequestContext): Promise<Dataset[]>;
+  restoreDatasetSnapshot(input: RestoreDatasetSnapshotInput, context?: RequestContext): Promise<Dataset>;
+  describeDataset(input: DescribeDatasetInput, context?: RequestContext): Promise<DescribeDatasetResult>;
+  listDatasetContent(input: ListDatasetContentInput, context?: RequestContext): Promise<ListDatasetContentResult>;
+  createChartFromDataset(input: CreateChartFromDatasetInput, context?: RequestContext): Promise<Dashboard>;
+  listDashboardFilters(input: ListDashboardFiltersInput, context?: RequestContext): Promise<ListDashboardFiltersResult>;
+  updateDashboardFilters(input: UpdateDashboardFiltersInput, context?: RequestContext): Promise<Dashboard>;
   renameDashboard(input: RenameDashboardInput, context?: RequestContext): Promise<Dashboard>;
   updateDataset(input: UpdateDatasetInput, context?: RequestContext): Promise<Dataset>;
   setDashboardPublishState(input: SetDashboardPublishStateInput, context?: RequestContext): Promise<Dashboard>;
   removeDashboardFilter(input: RemoveDashboardFilterInput, context?: RequestContext): Promise<Dashboard>;
 }
+
+export interface LocalWorkspaceStorage extends WorkspaceDataBackend {}
 
 export type PolicyAction =
   | "dashboard.read"
