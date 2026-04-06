@@ -344,19 +344,34 @@ export const dashboardFilterSchema = z.object({
   applyTo: z.array(z.string().min(1)).optional()
 });
 
-export const dashboardSchema = z.object({
-  id: z.string().min(1),
-  name: z.string().min(1),
-  subtitle: z.string().max(240).optional(),
-  themePreset: themePresetSchema.default("clean"),
-  presentation: chartPresentationSchema.optional(),
-  charts: z.array(chartSchema),
-  layout: layoutSchema,
-  filters: z.array(dashboardFilterSchema).default([]),
-  published: z.boolean().default(false),
-  createdAt: z.string().datetime(),
-  updatedAt: z.string().datetime()
+export const dashboardVisibilitySchema = z.enum(["private", "workspace", "public"]);
+
+const ownershipMetadataSchema = z.object({
+  workspaceId: z.string().min(1).default("local"),
+  createdBy: z.string().min(1).default("local")
 });
+
+export const dashboardSchema = z
+  .object({
+    id: z.string().min(1),
+    name: z.string().min(1),
+    subtitle: z.string().max(240).optional(),
+    themePreset: themePresetSchema.default("clean"),
+    presentation: chartPresentationSchema.optional(),
+    charts: z.array(chartSchema),
+    layout: layoutSchema,
+    filters: z.array(dashboardFilterSchema).default([]),
+    published: z.boolean().default(false),
+    visibility: dashboardVisibilitySchema.optional(),
+    workspaceId: ownershipMetadataSchema.shape.workspaceId,
+    createdBy: ownershipMetadataSchema.shape.createdBy,
+    createdAt: z.string().datetime(),
+    updatedAt: z.string().datetime()
+  })
+  .transform((value) => ({
+    ...value,
+    visibility: value.visibility ?? (value.published ? "public" : "private")
+  }));
 
 export const createDashboardInputSchema = z.object({
   id: z.string().min(1).optional(),
@@ -367,7 +382,10 @@ export const createDashboardInputSchema = z.object({
   charts: z.array(chartSchema).default([]),
   layout: layoutSchema.default(defaultLayout),
   filters: z.array(dashboardFilterSchema).default([]),
-  published: z.boolean().default(false)
+  published: z.boolean().default(false),
+  visibility: dashboardVisibilitySchema.optional(),
+  workspaceId: z.string().min(1).optional(),
+  createdBy: z.string().min(1).optional()
 });
 
 export const addDashboardFilterInputSchema = z.object({
@@ -507,6 +525,8 @@ export const datasetSchema = z.object({
   name: z.string().min(1),
   columns: z.array(z.string().min(1)).min(1),
   rows: z.array(datasetRowSchema),
+  workspaceId: ownershipMetadataSchema.shape.workspaceId,
+  createdBy: ownershipMetadataSchema.shape.createdBy,
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
   readOnly: z.boolean().optional().default(false)
@@ -631,7 +651,9 @@ export const templateSchema = z.object({
 export const createDashboardFromTemplateInputSchema = z.object({
   templateId: z.string().min(1),
   dashboardName: z.string().min(1).optional(),
-  datasetId: z.string().min(1).optional()
+  datasetId: z.string().min(1).optional(),
+  workspaceId: z.string().min(1).optional(),
+  createdBy: z.string().min(1).optional()
 });
 
 export const templateListSchema = z.object({
@@ -642,7 +664,9 @@ export const registerDatasetInputSchema = z.object({
   id: z.string().min(1).optional(),
   name: z.string().min(1),
   csv: z.string().min(1).optional(),
-  rows: z.array(datasetRowSchema).optional()
+  rows: z.array(datasetRowSchema).optional(),
+  workspaceId: z.string().min(1).optional(),
+  createdBy: z.string().min(1).optional()
 });
 
 export const describeDatasetInputSchema = z.object({
@@ -846,7 +870,9 @@ export const dashboardNlInputSchema = z.object({
   datasetId: z.string().min(1).optional(),
   csv: z.string().min(1).optional(),
   dashboardName: z.string().min(1).optional(),
-  datasetName: z.string().min(1).optional()
+  datasetName: z.string().min(1).optional(),
+  workspaceId: z.string().min(1).optional(),
+  createdBy: z.string().min(1).optional()
 });
 
 export type Chart = z.infer<typeof chartSchema>;

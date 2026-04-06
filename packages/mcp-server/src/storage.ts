@@ -118,18 +118,17 @@ import {
   updateDashboardFiltersInputSchema,
   dashboardFilterSchema,
   createDashboardFromTemplateInputSchema,
-  templateListSchema,
   type AddDashboardFilterInput,
   type RemoveDashboardFilterInput,
   type ListDashboardFiltersInput,
   type ListDashboardsInput,
   type DashboardFilter
 } from "../../shared/dist/index.js";
+import { localContentRegistry } from "./local-content-registry.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const REPO_DATA_DIR = path.resolve(__dirname, "../../../data");
-const TEMPLATES_FILE = path.resolve(__dirname, "..", "..", "shared", "templates.json");
 
 export type DataPaths = {
   baseDir: string;
@@ -274,15 +273,6 @@ const emptyDatasetStore: DatasetStore = { datasets: [] };
 const emptySnapshotStore: SnapshotStore = { snapshots: [] };
 const emptyDatasetSnapshotStore: DatasetSnapshotStore = { snapshots: [] };
 const emptyDeletedDashboardStore: DeletedDashboardStore = { dashboards: [] };
-
-const THEME_PRESETS: Array<{ id: ThemePreset; description: string }> = [
-  { id: "clean", description: "Neutral, minimal, default palette." },
-  { id: "business", description: "Corporate blue/teal palette for executive dashboards." },
-  { id: "dark_analytics", description: "Dark-friendly high-density analytics look." },
-  { id: "pastel", description: "Soft pastel palette for presentation-style dashboards." },
-  { id: "high_contrast", description: "Strong contrast palette for accessibility and visibility." },
-  { id: "textured", description: "Nivo palette with dots/lines patterns for visual distinction." }
-];
 
 // Renderer safety limits to avoid UI degradation.
 const LIMITS = {
@@ -436,10 +426,9 @@ let cachedDeletedStore: DeletedDashboardStore | null = null;
 
 async function ensureTemplates(): Promise<Template[]> {
   if (cachedTemplates) return cachedTemplates;
-  const raw = await fs.readFile(TEMPLATES_FILE, "utf8");
-  const parsed = templateListSchema.parse(JSON.parse(raw));
-  cachedTemplates = parsed.templates;
-  return parsed.templates;
+  const templates = await localContentRegistry.listTemplates();
+  cachedTemplates = templates;
+  return templates;
 }
 
 async function ensureSnapshotStore(): Promise<SnapshotStore> {
@@ -968,6 +957,9 @@ export async function createDashboard(input: unknown): Promise<Dashboard> {
     layout: parsed.layout,
     filters: parsed.filters ?? [],
     published: parsed.published ?? false,
+    visibility: parsed.visibility ?? (parsed.published ? "public" : "private"),
+    workspaceId: parsed.workspaceId ?? "local",
+    createdBy: parsed.createdBy ?? "local",
     createdAt: now,
     updatedAt: now
   };
@@ -1149,7 +1141,11 @@ export async function listAvailableDashboards(): Promise<Array<{ id: string; nam
 }
 
 export async function listThemePresets(): Promise<Array<{ id: ThemePreset; description: string }>> {
-  return THEME_PRESETS;
+  const themes = await localContentRegistry.listThemes();
+  return themes.map((theme) => ({
+    id: theme.id,
+    description: theme.description ?? ""
+  }));
 }
 
 export async function setDashboardTheme(input: unknown): Promise<Dashboard> {
@@ -1460,6 +1456,8 @@ export async function registerDataset(input: unknown): Promise<Dataset> {
     name: parsed.name,
     columns,
     rows,
+    workspaceId: parsed.workspaceId ?? "local",
+    createdBy: parsed.createdBy ?? "local",
     createdAt: now,
     updatedAt: now
   });
@@ -1699,6 +1697,8 @@ export async function createDashboardFromTemplate(input: unknown): Promise<Dashb
   let dashboard = await createDashboard({
     name: dashboardName,
     themePreset: template.themePreset ?? "clean",
+    workspaceId: parsed.workspaceId,
+    createdBy: parsed.createdBy,
     layout: {
       grid: template.grid,
       items: []
@@ -3114,7 +3114,9 @@ export async function dashboardNl(input: unknown): Promise<{
     const dashboard = await createDashboardFromTemplate({
       templateId,
       dashboardName: parsed.dashboardName ?? stripWrappingQuotes(nameRaw),
-      datasetId: parsed.datasetId
+      datasetId: parsed.datasetId,
+      workspaceId: parsed.workspaceId,
+      createdBy: parsed.createdBy
     });
     return {
       action: "create_dashboard_from_template",
@@ -3138,7 +3140,9 @@ export async function dashboardNl(input: unknown): Promise<{
     }
     const dataset = await registerDataset({
       name: parsed.datasetName ?? "dataset_auto",
-      csv: parsed.csv
+      csv: parsed.csv,
+      workspaceId: parsed.workspaceId,
+      createdBy: parsed.createdBy
     });
     return {
       action: "register_dataset",
@@ -3150,7 +3154,9 @@ export async function dashboardNl(input: unknown): Promise<{
   if (/(crear|create).*(dashboard|tablero)/.test(request)) {
     const dashboard = await createDashboard({
       name: parsed.dashboardName ?? "New Dashboard",
-      layout: defaultLayout
+      layout: defaultLayout,
+      workspaceId: parsed.workspaceId,
+      createdBy: parsed.createdBy
     });
     return {
       action: "create_dashboard",

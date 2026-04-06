@@ -1,63 +1,65 @@
 import express from "express";
 import cors from "cors";
 import fsSync from "node:fs";
-import fs from "node:fs/promises";
 import { watch } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { dashboardSchema, type Dashboard, type Dataset } from "../../shared/dist/index.js";
+import type { DataPaths, LocalWorkspaceStorage, RequestContext } from "../../core/dist/index.js";
+import { type Dashboard, type Dataset } from "../../shared/dist/index.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-type DataPaths = {
-  baseDir: string;
-  dashboards: string;
-  datasets: string;
-  snapshots: string;
-  datasetSnapshots: string;
-  deletedDashboards: string;
-};
 
 type StorageModule = {
-  ensureUserDataFiles: () => Promise<void>;
-  getDataPaths: () => DataPaths;
-  listDatasets: () => Promise<Dataset[]>;
-  removeDashboardFilter: (raw: { dashboardId: string; filterId: string }) => Promise<Dashboard>;
-  renameDashboard: (raw: { dashboardId: string; name: string }) => Promise<Dashboard>;
-  updateDataset: (raw: {
-    datasetId: string;
-    csv?: string;
-    rows?: Array<Record<string, string | number | null>>;
-    mode?: "replace" | "append";
-    allowSchemaChange?: boolean;
-  }) => Promise<Dataset>;
-  setDashboardPublishState: (raw: { dashboardId: string; published: boolean }) => Promise<Dashboard>;
+  default?: LocalWorkspaceStorage;
+  localWorkspaceStorage?: LocalWorkspaceStorage;
+  createRendererRequestContext?: () => RequestContext;
 };
 
-async function loadStorageModule(): Promise<StorageModule> {
+async function loadStorageModule(): Promise<{
+  storage: LocalWorkspaceStorage;
+  requestContext: RequestContext;
+}> {
   const candidates = [
-    path.resolve(__dirname, "../../mcp-server/src/storage.ts"),
-    path.resolve(__dirname, "../../mcp-server/dist/storage.js")
+    path.resolve(__dirname, "../../mcp-server/src/local-workspace-storage.ts"),
+    path.resolve(__dirname, "../../mcp-server/dist/local-workspace-storage.js")
   ];
 
   for (const candidate of candidates) {
     if (fsSync.existsSync(candidate)) {
-      return import(pathToFileURL(candidate).href) as Promise<StorageModule>;
+      const module = (await import(pathToFileURL(candidate).href)) as StorageModule;
+      const storage = module.localWorkspaceStorage ?? module.default;
+      if (!storage) {
+        continue;
+      }
+      if (module.localWorkspaceStorage) {
+        return {
+          storage,
+          requestContext: module.createRendererRequestContext?.() ?? { source: "renderer_api" }
+        };
+      }
+      return {
+        storage,
+        requestContext: module.createRendererRequestContext?.() ?? { source: "renderer_api" }
+      };
     }
   }
 
-  throw new Error("Could not resolve the storage module. Build the repo before starting the packaged renderer.");
+  throw new Error("Could not resolve the local workspace storage module. Build the repo before starting the packaged renderer.");
 }
 
+const loadedStorageModule = await loadStorageModule();
 const {
   ensureUserDataFiles,
   getDataPaths,
+  listDashboards,
   listDatasets,
   removeDashboardFilter,
   renameDashboard,
   updateDataset,
   setDashboardPublishState
-} = await loadStorageModule();
+} = loadedStorageModule.storage;
+const { requestContext } = loadedStorageModule;
 
 const dataPaths = getDataPaths();
 const DATA_FILE = dataPaths.dashboards;
@@ -74,14 +76,7 @@ const sseClients = new Set<express.Response>();
 let lastBroadcastAt = 0;
 
 async function readDashboards(): Promise<Dashboard[]> {
-  try {
-    const raw = await fs.readFile(DATA_FILE, "utf8");
-    const parsed = JSON.parse(raw) as { dashboards?: unknown[] };
-    const dashboards = parsed.dashboards ?? [];
-    return dashboards.map((item) => dashboardSchema.parse(item));
-  } catch {
-    return [];
-  }
+  return listDashboards(requestContext);
 }
 
 function resolveStaticWebDir(): string | undefined {
@@ -133,7 +128,7 @@ function buildDatasetValueMap(datasets: Dataset[]) {
 
 app.get("/api/datasets", async (_req, res) => {
   try {
-    const datasets = await listDatasets();
+    const datasets = await listDatasets(requestContext);
     const datasetValueMap = buildDatasetValueMap(datasets);
     res.json({ datasets, datasetValueMap });
   } catch (error) {
@@ -156,7 +151,7 @@ app.patch("/api/datasets/:id", async (req, res) => {
       rows: body.rows as Array<Record<string, string | number | null>> | undefined,
       mode: body.mode,
       allowSchemaChange: body.allowSchemaChange
-    });
+    }, requestContext);
     broadcastDatasetsUpdated("api_patch_dataset");
     res.json({ dataset });
   } catch (error) {
@@ -238,7 +233,7 @@ app.patch("/api/dashboards/:id", async (req, res) => {
         renameDashboard({
           dashboardId: req.params.id,
           name: body.name
-        })
+        }, requestContext)
       );
       reasons.push("rename_dashboard");
     }
@@ -248,7 +243,7 @@ app.patch("/api/dashboards/:id", async (req, res) => {
         setDashboardPublishState({
           dashboardId: req.params.id,
           published: body.published
-        })
+        }, requestContext)
       );
       reasons.push(body.published ? "publish_dashboard" : "unpublish_dashboard");
     }
@@ -277,10 +272,10 @@ app.patch("/api/dashboards/:id", async (req, res) => {
 
 app.delete("/api/dashboards/:id/filters/:filterId", async (req, res) => {
   try {
-    const dashboard = await removeDashboardFilter({
-      dashboardId: req.params.id,
-      filterId: req.params.filterId
-    });
+      const dashboard = await removeDashboardFilter({
+        dashboardId: req.params.id,
+        filterId: req.params.filterId
+      }, requestContext);
     broadcastDashboardsUpdated("remove_dashboard_filter");
     res.json({ dashboard });
   } catch (error) {

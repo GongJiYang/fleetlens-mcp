@@ -14,6 +14,7 @@
   ],
   "files": [
     "packages/cli/dist/**/*",
+    "packages/core/dist/**/*",
     "packages/mcp-server/dist/**/*",
     "packages/renderer/dist/**/*",
     "packages/shared/dist/**/*",
@@ -30,8 +31,9 @@
     "zod": "^3.23.8"
   },
   "scripts": {
-    "build": "npm run build -w @mcp-dashboard/shared && npm run build -w @mcp-dashboard/mcp-server && npm run build -w @mcp-dashboard/renderer && npm run build -w @mcp-dashboard/cli",
+    "build": "npm run build -w @mcp-dashboard/shared && npm run build -w @mcp-dashboard/core && npm run build -w @mcp-dashboard/mcp-server && npm run build -w @mcp-dashboard/renderer && npm run build -w @mcp-dashboard/cli",
     "dev:mcp": "npm run dev -w @mcp-dashboard/mcp-server",
+    "dev:mcp:http": "npm run dev:http -w @mcp-dashboard/mcp-server",
     "dev:renderer": "npm run dev -w @mcp-dashboard/renderer",
     "dev:stack": "concurrently \"npm run dev:mcp\" \"npm run dev:renderer\""
   },
