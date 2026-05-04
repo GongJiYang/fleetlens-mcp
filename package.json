@@ -32,6 +32,8 @@
   },
   "scripts": {
     "build": "npm run build -w @mcp-dashboard/shared && npm run build -w @mcp-dashboard/core && npm run build -w @mcp-dashboard/mcp-server && npm run build -w @mcp-dashboard/renderer && npm run build -w @mcp-dashboard/cli",
+    "test": "npm run build && node --import tsx --test packages/shared/test/index.test.ts packages/core/test/index.test.ts",
+    "test:unit": "node --import tsx --test packages/shared/test/index.test.ts packages/core/test/index.test.ts",
     "dev:mcp": "npm run dev -w @mcp-dashboard/mcp-server",
     "dev:mcp:http": "npm run dev:http -w @mcp-dashboard/mcp-server",
     "dev:renderer": "npm run dev -w @mcp-dashboard/renderer",
