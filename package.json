@@ -20,6 +20,7 @@
     "packages/shared/dist/**/*",
     "packages/shared/templates.json",
     "data/**/*",
+    "CHANGELOG.md",
     "docs/MCP_DOCUMENTATION.md",
     "README.md",
     "LICENSE"

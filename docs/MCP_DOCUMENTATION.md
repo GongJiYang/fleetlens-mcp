@@ -125,6 +125,39 @@ Precedence:
 2. `LUMINON_MCP_MODE`
 3. default `full`
 
+## Release Procedure
+
+Use this flow when you are preparing a new npm release of `@luminondev/mcp-dashboard`:
+
+1. Update `CHANGELOG.md` with the changes since the last published version.
+2. Decide the next package version.
+   - Use a patch bump for non-breaking runtime, docs, or packaging updates.
+   - Use a minor bump when you add new user-facing capabilities.
+   - Reserve major bumps for breaking changes.
+3. Update the root `package.json` version and let `package-lock.json` follow.
+4. Run the checks:
+
+```bash
+npm run build
+npm test
+```
+
+5. Verify the package content before publishing:
+
+```bash
+npm pack --dry-run
+```
+
+6. Publish the package:
+
+```bash
+npm publish --access public
+```
+
+7. Push the git commit and release tag if you used `npm version`.
+
+For this repository, the published tarball should include the built workspaces, seed data, `README.md`, `LICENSE`, `docs/MCP_DOCUMENTATION.md`, and `CHANGELOG.md`.
+
 ## Data Directory and Persistence
 
 By default, user data is stored in:
