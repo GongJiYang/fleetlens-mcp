@@ -48,6 +48,7 @@ export type ContextSource = "local_cli" | "renderer_api" | "remote_mcp" | "unkno
 export type RequestContext = {
   source: ContextSource;
   principalId?: string;
+  organizationId?: string;
   workspaceId?: string;
   role?: WorkspaceRole;
   licenseTier?: string;

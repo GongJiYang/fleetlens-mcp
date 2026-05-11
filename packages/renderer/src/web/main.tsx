@@ -108,8 +108,8 @@ const QUICKSTART_GUIDES: QuickstartGuide[] = [
     eyebrow: "General install",
     description:
       "Use the MCP server through npx. The renderer is optional and useful when you want a local dashboard preview in the browser.",
-    note: "Use the client-specific snippets below for Claude Desktop, Gemini CLI, Codex, or Perplexity Desktop. Switch to ultra-lite if your AI client has a very small daily quota.",
-    code: `npx -y @luminondev/mcp-dashboard mcp --mode lite\nnpx -y @luminondev/mcp-dashboard start renderer`,
+    note: "Use the client-specific snippets below for Claude Desktop, Gemini CLI, Codex, or Perplexity Desktop.",
+    code: `npx -y @luminondev/mcp-dashboard mcp\nnpx -y @luminondev/mcp-dashboard start renderer\n\nModes (optional):\n- full: exposes the complete toolset\n- lite: reduces the tool surface for smaller quotas\n- ultra-lite: smallest surface for very quota-limited clients\n\nYou can set a mode via --mode <mode> or LUMINON_MCP_MODE=<mode>.`,
     codeLang: "bash"
   },
   {
@@ -120,7 +120,7 @@ const QUICKSTART_GUIDES: QuickstartGuide[] = [
     pathValue:
       "macOS: ~/Library/Application Support/Claude/claude_desktop_config.json | Windows: %APPDATA%/Claude/claude_desktop_config.json",
     note: "If you already have other MCP servers configured, merge this inside your existing mcpServers object.",
-    code: `{\n  \"mcpServers\": {\n    \"luminon\": {\n      \"command\": \"npx\",\n      \"args\": [\"-y\", \"@luminondev/mcp-dashboard\", \"mcp\", \"--mode\", \"lite\"]\n    }\n  }\n}`,
+    code: `{\n  \"mcpServers\": {\n    \"luminon\": {\n      \"command\": \"npx\",\n      \"args\": [\"-y\", \"@luminondev/mcp-dashboard\", \"mcp\"]\n    }\n  }\n}`,
     codeLang: "json"
   },
   {
@@ -129,8 +129,8 @@ const QUICKSTART_GUIDES: QuickstartGuide[] = [
     description: "Add Luminon to your Gemini CLI settings so it starts automatically as an MCP server.",
     pathLabel: "Default config path",
     pathValue: "macOS/Linux: ~/.gemini/settings.json | Windows: %USERPROFILE%\\\\.gemini\\\\settings.json",
-    note: "Keep any existing Gemini CLI settings and add luminon under mcpServers. Ultra-lite is usually the safest choice for quota-limited Gemini sessions.",
-    code: `{\n  \"mcpServers\": {\n    \"luminon\": {\n      \"command\": \"npx\",\n      \"args\": [\"-y\", \"@luminondev/mcp-dashboard\", \"mcp\", \"--mode\", \"ultra-lite\"]\n    }\n  }\n}`,
+    note: "Keep any existing Gemini CLI settings and add luminon under mcpServers.",
+    code: `{\n  \"mcpServers\": {\n    \"luminon\": {\n      \"command\": \"npx\",\n      \"args\": [\"-y\", \"@luminondev/mcp-dashboard\", \"mcp\"]\n    }\n  }\n}`,
     codeLang: "json"
   },
   {
@@ -140,7 +140,7 @@ const QUICKSTART_GUIDES: QuickstartGuide[] = [
     pathLabel: "Default config path",
     pathValue: "~/.codex/config.toml",
     note: "Codex also supports adding MCP servers with commands, but the config file is the cleanest copy-paste setup.",
-    code: `[mcp_servers.luminon]\ncommand = \"npx\"\nargs = [\"-y\", \"@luminondev/mcp-dashboard\", \"mcp\", \"--mode\", \"lite\"]`,
+    code: `[mcp_servers.luminon]\ncommand = \"npx\"\nargs = [\"-y\", \"@luminondev/mcp-dashboard\", \"mcp\"]`,
     codeLang: "toml"
   },
   {
@@ -151,7 +151,7 @@ const QUICKSTART_GUIDES: QuickstartGuide[] = [
     pathLabel: "Where to add it",
     pathValue: "Perplexity Mac app -> Settings -> Connectors -> Add Connector",
     note: "Perplexity documents local MCP support for the macOS app. Enter the command below in the Add Connector form.",
-    code: `npx -y @luminondev/mcp-dashboard mcp --mode lite`,
+    code: `npx -y @luminondev/mcp-dashboard mcp`,
     codeLang: "bash"
   }
 ];
@@ -494,7 +494,15 @@ function getSharedDashboardIdFromPath(): string | null {
   return match?.[1] ? decodeURIComponent(match[1]) : null;
 }
 
+function getSharedDashboardPageFromQuery(): string | null {
+  if (typeof window === "undefined") return null;
+  const params = new URLSearchParams(window.location.search);
+  const page = params.get("page");
+  return page && page.trim().length > 0 ? page.trim() : null;
+}
+
 function useDashboardById(dashboardId: string | null) {
+  const pageId = React.useMemo(() => getSharedDashboardPageFromQuery(), []);
   const [dashboard, setDashboard] = React.useState<Dashboard | null>(null);
   const [loading, setLoading] = React.useState(Boolean(dashboardId));
   const [error, setError] = React.useState<string | null>(null);
@@ -518,7 +526,11 @@ function useDashboardById(dashboardId: string | null) {
       return;
     }
 
-    fetch(`/api/dashboards/${dashboardId}`)
+    const requestPath = pageId
+      ? `/api/dashboards/${dashboardId}?page=${encodeURIComponent(pageId)}`
+      : `/api/dashboards/${dashboardId}`;
+
+    fetch(requestPath)
       .then(async (res) => {
         if (!res.ok) {
           throw new Error(`Dashboard not found (${res.status})`);
@@ -534,7 +546,7 @@ function useDashboardById(dashboardId: string | null) {
       .finally(() => {
         setLoading(false);
       });
-  }, [dashboardId]);
+  }, [dashboardId, pageId]);
 
   React.useEffect(() => {
     if (!dashboardId) return;
@@ -944,13 +956,19 @@ function renderChart(chart: Chart, dashboardTheme?: ThemePreset, dashboardPresen
   const preset = resolvePreset(dashboardTheme, chart.themePreset);
   const presentation = resolvePresentation(dashboardPresentation, chart.presentation, preset);
   const useTexture = (chart.themePreset ?? dashboardTheme) === "textured";
+  const hasData = "data" in chart && Array.isArray(chart.data) && chart.data.length > 0;
+  const hasRows = chart.type === "table" && Array.isArray(chart.rows) && chart.rows.length > 0;
+  const hasKpiValue = chart.type === "kpi_card" && typeof chart.value === "number" && Number.isFinite(chart.value);
 
-  if (
-    chart.type !== "kpi_card" &&
-    chart.type !== "table" &&
-    "data" in chart &&
-    (!Array.isArray(chart.data) || chart.data.length === 0)
-  ) {
+  if (chart.type === "table" && !hasRows) {
+    return <EmptyChart />;
+  }
+
+  if (chart.type === "kpi_card" && !hasKpiValue) {
+    return <EmptyChart />;
+  }
+
+  if (chart.type !== "kpi_card" && chart.type !== "table" && !hasData) {
     return <EmptyChart />;
   }
 
@@ -1001,12 +1019,25 @@ function renderChart(chart: Chart, dashboardTheme?: ThemePreset, dashboardPresen
   }
 
   if (chart.type === "bar_grouped" || chart.type === "bar_stacked") {
-    const fill = useTexture ? alternatingFill(chart.keys) : [];
+    const data = Array.isArray(chart.data) ? (chart.data as Record<string, string | number>[]) : [];
+    const resolvedKeys = Array.isArray(chart.keys) && chart.keys.length > 0
+      ? chart.keys
+      : data.length > 0
+        ? Array.from(new Set(
+            data.flatMap((row) =>
+              Object.keys(row).filter((key) => key !== (chart.indexBy ?? "category") && typeof row[key] === "number")
+            )
+          ))
+        : [];
+    if (resolvedKeys.length === 0) {
+      return <EmptyChart />;
+    }
+    const fill = useTexture ? alternatingFill(resolvedKeys) : [];
     const legendOffsetY = presentation.showLegend ? 64 : 0;
     return (
       <ResponsiveBar
-        data={chart.data as Record<string, string | number>[]}
-        keys={chart.keys}
+        data={data}
+        keys={resolvedKeys}
         indexBy={chart.indexBy}
         theme={{
         ...nivoThemeForPreset(preset, presentation),
@@ -2102,7 +2133,8 @@ function applyFiltersToChart(
   }
 
   if (chart.type === "table") {
-    const filtered = applyFiltersToRows(chart.rows as TableRow[], filters, chart.id, chart.datasetId);
+    const tableRows = Array.isArray(chart.rows) ? (chart.rows as TableRow[]) : [];
+    const filtered = applyFiltersToRows(tableRows, filters, chart.id, chart.datasetId);
     return { ...chart, rows: filtered } as Chart;
   }
 
@@ -2180,7 +2212,7 @@ function getUniqueFieldValues(
         rows = chart.data as TableRow[];
       }
     } else if (chart.type === "table") {
-      rows = chart.rows as TableRow[];
+      rows = Array.isArray(chart.rows) ? (chart.rows as TableRow[]) : [];
     }
     for (const row of rows) {
       const val = row[field];

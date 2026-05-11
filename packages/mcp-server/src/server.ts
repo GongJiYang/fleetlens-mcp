@@ -268,6 +268,7 @@ function readAuthExtra(extra: ToolExtra, key: string): unknown {
 function requestContextFromExtra(extra: ToolExtra, requestSource: RequestSource): RequestContext {
   const roleValue = readAuthExtra(extra, "role");
   const principalFromExtra = readAuthExtra(extra, "principalId");
+  const organizationFromExtra = readAuthExtra(extra, "organizationId");
   const workspaceFromExtra = readAuthExtra(extra, "workspaceId");
   const licenseTierFromExtra = readAuthExtra(extra, "licenseTier");
 
@@ -282,6 +283,10 @@ function requestContextFromExtra(extra: ToolExtra, requestSource: RequestSource)
         ? workspaceFromExtra
         : requestSource === "local_cli"
         ? "local"
+        : undefined,
+    organizationId:
+      typeof organizationFromExtra === "string" && organizationFromExtra.trim().length > 0
+        ? organizationFromExtra
         : undefined,
     role: isWorkspaceRole(roleValue)
       ? roleValue
