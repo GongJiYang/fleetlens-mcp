@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 - 2026-05-11
 
 - Added `organizationId` to the shared request context so the remote MCP runtime can carry commercial workspace metadata.
 - Added streamable HTTP MCP support with optional bearer-token auth for remote deployments.
