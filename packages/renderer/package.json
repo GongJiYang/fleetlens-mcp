@@ -1,6 +1,6 @@
 {
   "name": "@mcp-dashboard/renderer",
-  "version": "0.1.0",
+  "version": "0.9.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,7 +10,7 @@
     "dev:web": "vite --config vite.config.ts"
   },
   "dependencies": {
-    "@mcp-dashboard/shared": "0.1.0",
+    "@mcp-dashboard/shared": "0.9.0",
     "@nivo/bar": "^0.88.0",
     "@nivo/line": "^0.88.0",
     "@nivo/pie": "^0.88.0",

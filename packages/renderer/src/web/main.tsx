@@ -11,6 +11,7 @@ import type {
   Chart,
   ChartPresentation,
   Dashboard,
+  DashboardGroup,
   DashboardFilter,
   DatasetChartSource,
   DonutChart,
@@ -27,6 +28,8 @@ import "./landing-themes.css";
 import breezeLogoUrl from "./assets/logo.svg";
 
 const IS_STATIC_DEMO = import.meta.env.VITE_STATIC_DEMO === "true";
+const SIDEBAR_GROUP_VISIBLE_LIMIT = 8;
+const ACTIVE_GROUP_STORAGE_KEY = "luminon.activeGroupId";
 let staticDataPromise: Promise<{ dashboards: Dashboard[]; datasets: Dataset[] }> | null = null;
 
 async function loadStaticData(): Promise<{ dashboards: Dashboard[]; datasets: Dataset[] }> {
@@ -455,7 +458,7 @@ function useDashboards(enabled = true) {
         retryRef.current = 0;
         return;
       }
-      const res = await fetch("/api/dashboards");
+      const res = await fetch(`/api/dashboards?_t=${Date.now()}`, { cache: "no-store" });
       const payload = (await res.json()) as { dashboards: Dashboard[] };
       setDashboards(payload.dashboards ?? []);
       retryRef.current = 0;
@@ -487,6 +490,51 @@ function useDashboards(enabled = true) {
   return { dashboards, setDashboards, loading, reload };
 }
 
+type DashboardGroupSummary = Pick<DashboardGroup, "id" | "name" | "slug" | "sortOrder"> & {
+  items: Array<{ dashboardId: string; dashboardName: string; sortOrder: number }>;
+};
+
+type ShareLinkSummary = {
+  id: string;
+  publicToken: string;
+  label: string | null;
+  shareUrl: string;
+  createdAt: string;
+  expiresAt: string | null;
+  passcodeProtected?: boolean;
+};
+
+function useDashboardGroups(enabled = true) {
+  const [groups, setGroups] = React.useState<DashboardGroupSummary[]>([]);
+  const [loading, setLoading] = React.useState(enabled);
+
+  const reload = React.useCallback(async () => {
+    if (!enabled) return;
+    setLoading(true);
+    try {
+      if (IS_STATIC_DEMO) {
+        setGroups([]);
+        return;
+      }
+      const res = await fetch(`/api/dashboard-groups?_t=${Date.now()}`, { cache: "no-store" });
+      const payload = (await res.json()) as { groups?: DashboardGroupSummary[] };
+      setGroups((payload.groups ?? []).sort((left, right) => (left.sortOrder ?? 0) - (right.sortOrder ?? 0)));
+    } catch (error) {
+      console.error("Failed to load dashboard groups", error);
+      setGroups([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [enabled]);
+
+  React.useEffect(() => {
+    if (!enabled) return;
+    void reload();
+  }, [enabled, reload]);
+
+  return { groups, loading, reload };
+}
+
 function getSharedDashboardIdFromPath(): string | null {
   if (typeof window === "undefined") return null;
   const path = window.location.pathname;
@@ -501,8 +549,31 @@ function getSharedDashboardPageFromQuery(): string | null {
   return page && page.trim().length > 0 ? page.trim() : null;
 }
 
+function getShareTokenFromQuery(): string | null {
+  if (typeof window === "undefined") return null;
+  const params = new URLSearchParams(window.location.search);
+  const token = params.get("shareToken");
+  return token && token.trim().length > 0 ? token.trim() : null;
+}
+
+function getSharePasscodeFromQuery(): string | null {
+  if (typeof window === "undefined") return null;
+  const params = new URLSearchParams(window.location.search);
+  const passcode = params.get("passcode");
+  return passcode && passcode.trim().length > 0 ? passcode.trim() : null;
+}
+
+function getSharePasscodeFromSession(token: string | null): string | null {
+  if (typeof window === "undefined" || !token) return null;
+  const value = window.sessionStorage.getItem(`luminon.share.passcode.${token}`);
+  return value && value.trim().length > 0 ? value.trim() : null;
+}
+
 function useDashboardById(dashboardId: string | null) {
   const pageId = React.useMemo(() => getSharedDashboardPageFromQuery(), []);
+  const shareToken = React.useMemo(() => getShareTokenFromQuery(), []);
+  const sharePasscode = React.useMemo(() => getSharePasscodeFromQuery(), []);
+  const shareSessionPasscode = React.useMemo(() => getSharePasscodeFromSession(shareToken), [shareToken]);
   const [dashboard, setDashboard] = React.useState<Dashboard | null>(null);
   const [loading, setLoading] = React.useState(Boolean(dashboardId));
   const [error, setError] = React.useState<string | null>(null);
@@ -526,16 +597,28 @@ function useDashboardById(dashboardId: string | null) {
       return;
     }
 
-    const requestPath = pageId
-      ? `/api/dashboards/${dashboardId}?page=${encodeURIComponent(pageId)}`
-      : `/api/dashboards/${dashboardId}`;
+    const effectiveSharePasscode = sharePasscode || shareSessionPasscode;
+    const requestPath = shareToken
+      ? `/api/shared/${encodeURIComponent(shareToken)}${effectiveSharePasscode ? `?passcode=${encodeURIComponent(effectiveSharePasscode)}` : ""}`
+      : pageId
+        ? `/api/dashboards/${dashboardId}?page=${encodeURIComponent(pageId)}`
+        : `/api/dashboards/${dashboardId}`;
 
-    fetch(requestPath)
+    fetch(`${requestPath}${requestPath.includes("?") ? "&" : "?"}_t=${Date.now()}`, { cache: "no-store" })
       .then(async (res) => {
+        const payload = (await res.json().catch(() => ({}))) as {
+          dashboard?: Dashboard;
+          error?: string;
+          passcodeRequired?: boolean;
+        };
         if (!res.ok) {
-          throw new Error(`Dashboard not found (${res.status})`);
+          if (shareToken && res.status === 401 && payload.passcodeRequired && typeof window !== "undefined") {
+            window.location.href = `/shared/${encodeURIComponent(shareToken)}`;
+            throw new Error("Passcode required");
+          }
+          throw new Error(payload.error || `Dashboard not found (${res.status})`);
         }
-        return res.json();
+        return payload as { dashboard: Dashboard };
       })
       .then((payload: { dashboard: Dashboard }) => {
         setDashboard(payload.dashboard);
@@ -546,7 +629,7 @@ function useDashboardById(dashboardId: string | null) {
       .finally(() => {
         setLoading(false);
       });
-  }, [dashboardId, pageId]);
+  }, [dashboardId, pageId, sharePasscode, shareSessionPasscode, shareToken]);
 
   React.useEffect(() => {
     if (!dashboardId) return;
@@ -570,7 +653,7 @@ function useDatasets() {
         setDatasets(data.datasets);
         return;
       }
-      const response = await fetch("/api/datasets");
+      const response = await fetch(`/api/datasets?_t=${Date.now()}`, { cache: "no-store" });
       const payload = await response.json();
       setDatasets((payload.datasets ?? []) as Dataset[]);
     } catch (error) {
@@ -590,12 +673,42 @@ function useDatasets() {
 
 function countUniqueDatasets(dashboard: Dashboard): number {
   const datasetIds = new Set<string>();
-  for (const chart of dashboard.charts) {
+  const charts = dashboard.pages?.length
+    ? dashboard.pages.flatMap((page) => page.charts ?? [])
+    : dashboard.charts;
+  for (const chart of charts) {
     if ('datasetId' in chart && chart.datasetId) {
       datasetIds.add(chart.datasetId);
     }
   }
   return datasetIds.size;
+}
+
+function countDashboardCharts(dashboard: Dashboard): number {
+  if (dashboard.pages?.length) {
+    return dashboard.pages.reduce((total, page) => total + (page.charts?.length ?? 0), 0);
+  }
+  return dashboard.charts.length;
+}
+
+type DashboardPageView = NonNullable<Dashboard["pages"]>[number];
+
+function sortDashboardPages(pages?: Dashboard["pages"]): DashboardPageView[] {
+  return Array.isArray(pages)
+    ? [...pages].sort((a, b) => {
+        const aOrder = Number.isInteger(a.pageOrder) ? a.pageOrder : 0;
+        const bOrder = Number.isInteger(b.pageOrder) ? b.pageOrder : 0;
+        return aOrder - bOrder;
+      })
+    : [];
+}
+
+function getInitialDashboardPageId(dashboard: Dashboard): string | null {
+  if (typeof window === "undefined") return null;
+  const params = new URLSearchParams(window.location.search);
+  const page = params.get("page");
+  if (page && page.trim().length > 0) return page.trim();
+  return dashboard.pages?.[0]?.id ?? null;
 }
 
 function collectDatasetIds(charts: Chart[]): Set<string> {
@@ -2249,11 +2362,33 @@ function DashboardView({
   const [filterValues, setFilterValues] = React.useState<Record<string, string>>({});
   const [filterValuesTo, setFilterValuesTo] = React.useState<Record<string, string>>({});
   const [mobileFiltersOpen, setMobileFiltersOpen] = React.useState(false);
+  const [activePageId, setActivePageId] = React.useState<string | null>(() => getInitialDashboardPageId(dashboard));
   const [isSingleColumnViewport, setIsSingleColumnViewport] = React.useState(() =>
     typeof window !== "undefined" ? window.innerWidth < 900 : false
   );
 
-  const storedFilters = dashboard.filters ?? [];
+  const dashboardPages = React.useMemo(() => sortDashboardPages(dashboard.pages), [dashboard.pages]);
+  const activePage = React.useMemo(() => {
+    if (dashboardPages.length === 0) return null;
+    const selected = activePageId ? dashboardPages.find((page) => page.id === activePageId) : undefined;
+    return selected ?? dashboardPages[0];
+  }, [activePageId, dashboardPages]);
+  const activeThemePreset = activePage?.themePreset ?? dashboard.themePreset;
+  const activePresentation = activePage?.presentation ?? dashboard.presentation;
+  const activeSubtitle = activePage?.subtitle ?? dashboard.subtitle;
+  const activeDashboard = activePage
+    ? {
+        ...dashboard,
+        charts: activePage.charts ?? [],
+        layout: activePage.layout ?? dashboard.layout,
+        filters: activePage.filters ?? [],
+        subtitle: activeSubtitle,
+        themePreset: activeThemePreset,
+        presentation: activePresentation
+      }
+    : dashboard;
+
+  const storedFilters = activeDashboard.filters ?? [];
 
   const activeFilters: DashboardFilter[] = storedFilters.flatMap((f) => {
     const baseVal = filterValues[f.id] !== undefined ? filterValues[f.id] : f.value;
@@ -2270,13 +2405,13 @@ function DashboardView({
 
   // Align layout with available charts to avoid react-grid-layout key mismatches when
   // a chart is missing (e.g., race between storage update and SSE reload).
-  const visibleItems = sortLayoutItems(dashboard.layout.items.filter((item) =>
-    dashboard.charts.some((chart) => chart.id === item.chart)
+  const visibleItems = sortLayoutItems(activeDashboard.layout.items.filter((item) =>
+    activeDashboard.charts.some((chart) => chart.id === item.chart)
   ));
 
   const layouts = {
-    lg: buildResponsiveLayout(visibleItems, dashboard.layout.grid.columns),
-    md: buildResponsiveLayout(visibleItems, dashboard.layout.grid.columns),
+    lg: buildResponsiveLayout(visibleItems, activeDashboard.layout.grid.columns),
+    md: buildResponsiveLayout(visibleItems, activeDashboard.layout.grid.columns),
     sm: buildResponsiveLayout(visibleItems, 1),
     xs: buildResponsiveLayout(visibleItems, 1),
     xxs: buildResponsiveLayout(visibleItems, 1)
@@ -2287,11 +2422,11 @@ function DashboardView({
     if (!datasets?.length) return new Map<string, Dataset>();
     return new Map(datasets.map((dataset) => [dataset.id, dataset]));
   }, [datasets]);
-  const dashboardDatasetIds = React.useMemo(() => collectDatasetIds(dashboard.charts), [dashboard.charts]);
+  const dashboardDatasetIds = React.useMemo(() => collectDatasetIds(activeDashboard.charts), [activeDashboard.charts]);
 
   const filteredCharts = React.useMemo(
-    () => dashboard.charts.map((chart) => applyFiltersToChart(chart, activeFilters, datasetMap)),
-    [dashboard.charts, activeFilters, datasetMap]
+    () => activeDashboard.charts.map((chart) => applyFiltersToChart(chart, activeFilters, datasetMap)),
+    [activeDashboard.charts, activeFilters, datasetMap]
   );
 
   const chartById = new Map(filteredCharts.map((chart) => [chart.id, chart]));
@@ -2303,6 +2438,17 @@ function DashboardView({
   }, [dashboard.id]);
 
   React.useEffect(() => {
+    if (dashboardPages.length === 0) {
+      setActivePageId(null);
+      return;
+    }
+    const stillValid = activePageId && dashboardPages.some((page) => page.id === activePageId);
+    if (!stillValid) {
+      setActivePageId(dashboardPages[0].id);
+    }
+  }, [dashboardPages, activePageId]);
+
+  React.useEffect(() => {
     if (typeof window === "undefined") return;
     const syncViewport = () => setIsSingleColumnViewport(window.innerWidth < 900);
     syncViewport();
@@ -2312,6 +2458,42 @@ function DashboardView({
 
   return (
     <>
+      {dashboardPages.length > 1 && (
+        <div className="luminon-page-tabs" role="tablist" aria-label="Dashboard pages">
+          {dashboardPages.map((page, index) => {
+            const isActive = page.id === activePage?.id;
+            return (
+              <button
+                key={page.id}
+                type="button"
+                role="tab"
+                aria-selected={isActive}
+                className={`luminon-page-tab ${isActive ? "is-active" : ""}`}
+                onClick={() => {
+                  setActivePageId(page.id);
+                  if (typeof window !== "undefined") {
+                    const url = new URL(window.location.href);
+                    if (page.id === dashboardPages[0]?.id || page.id === "page_main") {
+                      url.searchParams.delete("page");
+                    } else {
+                      url.searchParams.set("page", page.slug || page.id);
+                    }
+                    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+                  }
+                }}
+              >
+                <span className="luminon-page-tab-label">{page.name}</span>
+                <span className="luminon-page-tab-meta">{index + 1}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {activeSubtitle && (
+        <p className="luminon-page-subtitle">
+          {activeSubtitle}
+        </p>
+      )}
       {storedFilters.length > 0 && (
         <>
           <div className="luminon-filter-toolbar">
@@ -2332,7 +2514,7 @@ function DashboardView({
           >
           {storedFilters.map((filter) => {
             const uniqueVals = getUniqueFieldValues(
-              dashboard.charts,
+              activeDashboard.charts,
               filter.field,
               datasets,
               dashboardDatasetIds
@@ -2409,8 +2591,8 @@ function DashboardView({
         layouts={layouts}
         breakpoints={{ lg: 1200, md: 900, sm: 640, xs: 480, xxs: 0 }}
         cols={{
-          lg: dashboard.layout.grid.columns,
-          md: dashboard.layout.grid.columns,
+          lg: activeDashboard.layout.grid.columns,
+          md: activeDashboard.layout.grid.columns,
           sm: 1,
           xs: 1,
           xxs: 1
@@ -2426,8 +2608,8 @@ function DashboardView({
         {visibleItems.map((item) => {
           const chart = chartById.get(item.chart);
           if (!chart) return null;
-          const preset = resolvePreset(dashboard.themePreset, chart.themePreset);
-          const presentation = resolvePresentation(dashboard.presentation, chart.presentation, preset);
+          const preset = resolvePreset(activeThemePreset, chart.themePreset);
+          const presentation = resolvePresentation(activePresentation, chart.presentation, preset);
 
           return (
             <div
@@ -2463,7 +2645,7 @@ function DashboardView({
               </div>
               <div style={{ height: "calc(100% - 30px)" }}>
                 <ChartErrorBoundary>
-                  {renderChart(chart, dashboard.themePreset, dashboard.presentation)}
+                  {renderChart(chart, activeThemePreset, activePresentation)}
                 </ChartErrorBoundary>
               </div>
             </div>
@@ -2472,8 +2654,8 @@ function DashboardView({
       </GridLayout>
 
       {expandedChart && (() => {
-        const preset = resolvePreset(dashboard.themePreset, expandedChart.themePreset);
-        const presentation = resolvePresentation(dashboard.presentation, expandedChart.presentation, preset);
+        const preset = resolvePreset(activeThemePreset, expandedChart.themePreset);
+        const presentation = resolvePresentation(activePresentation, expandedChart.presentation, preset);
         return (
           <div
             className="luminon-chart-modal-backdrop"
@@ -2515,7 +2697,7 @@ function DashboardView({
               <div className="luminon-chart-modal-body">
                 <div style={{ height: "100%" }}>
                   <ChartErrorBoundary>
-                    {renderChart(expandedChart, dashboard.themePreset, dashboard.presentation)}
+                    {renderChart(expandedChart, activeThemePreset, activePresentation)}
                   </ChartErrorBoundary>
                 </div>
               </div>
@@ -2530,18 +2712,30 @@ function DashboardView({
 function App() {
   const sharedDashboardId = React.useMemo(() => getSharedDashboardIdFromPath(), []);
   const { dashboards, setDashboards, loading, reload: reloadDashboards } = useDashboards(!sharedDashboardId);
+  const { groups: dashboardGroups, reload: reloadDashboardGroups } = useDashboardGroups(!sharedDashboardId);
   const shared = useDashboardById(sharedDashboardId);
   const reloadSharedDashboard = shared.reload;
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
   const [searchQuery, setSearchQuery] = React.useState("");
+  const [activeGroupId, setActiveGroupId] = React.useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    return window.localStorage.getItem(ACTIVE_GROUP_STORAGE_KEY);
+  });
+  const [groupMenuOpen, setGroupMenuOpen] = React.useState(false);
+  const [groupSearchQuery, setGroupSearchQuery] = React.useState("");
   const [editingName, setEditingName] = React.useState(false);
   const [nameDraft, setNameDraft] = React.useState("");
   const [savingName, setSavingName] = React.useState(false);
-  const [copyStatus, setCopyStatus] = React.useState<"idle" | "copied" | "error">("idle");
+  const [shareOpen, setShareOpen] = React.useState(false);
+  const [shareLinks, setShareLinks] = React.useState<ShareLinkSummary[]>([]);
+  const [shareLoading, setShareLoading] = React.useState(false);
+  const [shareError, setShareError] = React.useState<string | null>(null);
+  const [shareLabel, setShareLabel] = React.useState("");
+  const [sharePasscode, setSharePasscode] = React.useState("");
+  const [shareBusy, setShareBusy] = React.useState(false);
+  const [shareNotice, setShareNotice] = React.useState<string | null>(null);
   const [renameError, setRenameError] = React.useState<string | null>(null);
-  const [publishError, setPublishError] = React.useState<string | null>(null);
   const [collapsed, setCollapsed] = React.useState(false);
-  const [publishing, setPublishing] = React.useState(false);
   const [mobileNavOpen, setMobileNavOpen] = React.useState(false);
   const refreshPendingRef = React.useRef(false);
   const isReadOnlyDemo = IS_STATIC_DEMO;
@@ -2576,12 +2770,44 @@ function App() {
 
   const filteredDashboards = React.useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
-    if (!query) return dashboards;
-    return dashboards.filter(
+    const groupDashboardIds = activeGroupId
+      ? new Set((dashboardGroups.find((group) => group.id === activeGroupId)?.items ?? []).map((item) => item.dashboardId))
+      : null;
+    const scopedDashboards = groupDashboardIds
+      ? dashboards.filter((dashboard) => groupDashboardIds.has(dashboard.id))
+      : dashboards;
+    if (!query) return scopedDashboards;
+    return scopedDashboards.filter(
       (dashboard) =>
         dashboard.name.toLowerCase().includes(query) || dashboard.id.toLowerCase().includes(query)
     );
-  }, [dashboards, searchQuery]);
+  }, [activeGroupId, dashboardGroups, dashboards, searchQuery]);
+
+  const orderedGroups = React.useMemo(() => {
+    const groups = [...dashboardGroups];
+    if (!activeGroupId) return groups;
+    const index = groups.findIndex((group) => group.id === activeGroupId);
+    if (index <= 0) return groups;
+    const [active] = groups.splice(index, 1);
+    groups.unshift(active);
+    return groups;
+  }, [activeGroupId, dashboardGroups]);
+
+  const visibleGroups = React.useMemo(
+    () => orderedGroups.slice(0, SIDEBAR_GROUP_VISIBLE_LIMIT),
+    [orderedGroups]
+  );
+
+  const overflowGroups = React.useMemo(
+    () => orderedGroups.slice(SIDEBAR_GROUP_VISIBLE_LIMIT),
+    [orderedGroups]
+  );
+
+  const filteredOverflowGroups = React.useMemo(() => {
+    const query = groupSearchQuery.trim().toLowerCase();
+    if (!query) return overflowGroups;
+    return overflowGroups.filter((group) => group.name.toLowerCase().includes(query) || group.slug.toLowerCase().includes(query));
+  }, [groupSearchQuery, overflowGroups]);
 
   const themeToggle = (
     <button
@@ -2723,7 +2949,6 @@ function App() {
   }, [dashboards, selectedId, showHome]);
 
   const selected = dashboards.find((d) => d.id === selectedId) ?? null;
-  const canShare = Boolean(selected?.published);
 
   React.useEffect(() => {
     const reloadCurrentView = () => {
@@ -2746,6 +2971,7 @@ function App() {
       }
       refreshPendingRef.current = false;
       reloadCurrentView();
+      void reloadDashboardGroups();
     };
     const onDatasetsUpdated = async () => {
       if (typeof document !== "undefined" && document.visibilityState !== "visible") {
@@ -2779,7 +3005,29 @@ function App() {
       source.removeEventListener("datasets_updated", onDatasetsUpdated);
       source.close();
     };
-  }, [reloadDashboards, reloadDatasets, reloadSharedDashboard, sharedDashboardId]);
+  }, [reloadDashboardGroups, reloadDashboards, reloadDatasets, reloadSharedDashboard, sharedDashboardId]);
+
+  React.useEffect(() => {
+    if (!activeGroupId) return;
+    if (!dashboardGroups.some((group) => group.id === activeGroupId)) {
+      setActiveGroupId(null);
+    }
+  }, [activeGroupId, dashboardGroups]);
+
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!activeGroupId) {
+      window.localStorage.removeItem(ACTIVE_GROUP_STORAGE_KEY);
+      return;
+    }
+    window.localStorage.setItem(ACTIVE_GROUP_STORAGE_KEY, activeGroupId);
+  }, [activeGroupId]);
+
+  React.useEffect(() => {
+    if (!groupMenuOpen) {
+      setGroupSearchQuery("");
+    }
+  }, [groupMenuOpen]);
 
   React.useEffect(() => {
     if (!selected) return;
@@ -2840,70 +3088,107 @@ function App() {
     }
   }
 
-  async function togglePublishState() {
-    if (!selected) return;
-    const nextPublished = !selected.published;
-    setPublishing(true);
-    setPublishError(null);
+
+  async function loadShareLinks(dashboardId: string) {
+    setShareLoading(true);
+    setShareError(null);
     try {
-      const res = await fetch(`/api/dashboards/${selected.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ published: nextPublished })
-      });
-      if (!res.ok) {
-        const payload = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(payload.error || `Publish toggle failed (${res.status})`);
-      }
-      const payload = (await res.json()) as { dashboard: Dashboard };
-      setDashboards((prev) =>
-        prev.map((item) => (item.id === payload.dashboard.id ? payload.dashboard : item))
-      );
-      if (!nextPublished) {
-        setCopyStatus("idle");
-      }
+      const res = await fetch(`/api/dashboards/${dashboardId}/share-links`);
+      if (!res.ok) throw new Error(`Failed to load share links (${res.status})`);
+      const payload = (await res.json()) as { shareLinks?: ShareLinkSummary[] };
+      setShareLinks(payload.shareLinks ?? []);
     } catch (error) {
-      console.error(error);
-      const message =
-        error instanceof Error && error.message
-          ? error.message
-          : "Could not update the publish state.";
-      setPublishError(message);
+      setShareError(error instanceof Error ? error.message : "Failed to load share links");
     } finally {
-      setPublishing(false);
+      setShareLoading(false);
     }
   }
 
-  async function copyDashboardUrl() {
-    if (!selected || !selected.published || typeof window === "undefined") return;
-    const shareUrl = new URL(`/dashboards/${encodeURIComponent(selected.id)}`, window.location.origin).toString();
+  async function createShareLink() {
+    if (!selected) return;
+    setShareBusy(true);
+    setShareError(null);
     try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(shareUrl);
-      } else {
-        const input = document.createElement("input");
-        input.value = shareUrl;
-        document.body.appendChild(input);
-        input.select();
-        document.execCommand("copy");
-        document.body.removeChild(input);
-      }
-      setCopyStatus("copied");
+      const res = await fetch(`/api/dashboards/${selected.id}/share-links`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          label: shareLabel.trim() || undefined,
+          passcode: sharePasscode.trim() || undefined
+        })
+      });
+      const payload = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(payload.error || `Failed to create share link (${res.status})`);
+      setSharePasscode("");
+      setShareLabel("");
+      await loadShareLinks(selected.id);
     } catch (error) {
-      console.error(error);
-      setCopyStatus("error");
+      setShareError(error instanceof Error ? error.message : "Failed to create share link");
+    } finally {
+      setShareBusy(false);
+    }
+  }
+
+  async function copyShareUrl(shareUrl: string) {
+    if (typeof window === "undefined") return;
+    const fullUrl = new URL(shareUrl, window.location.origin).toString();
+    try {
+      await navigator.clipboard.writeText(fullUrl);
+      setShareNotice("Link copied.");
+    } catch {
+      setShareError("Could not copy URL to clipboard");
+    }
+  }
+
+  async function revokeShareLink(shareLinkId: string) {
+    if (!selected) return;
+    if (!window.confirm("Revoke this link? People with this URL will lose access.")) return;
+    setShareBusy(true);
+    setShareError(null);
+    try {
+      const res = await fetch(`/api/share-links/${shareLinkId}/revoke`, { method: "POST" });
+      if (!res.ok) throw new Error(`Failed to revoke (${res.status})`);
+      await loadShareLinks(selected.id);
+    } catch (error) {
+      setShareError(error instanceof Error ? error.message : "Failed to revoke share link");
+    } finally {
+      setShareBusy(false);
+    }
+  }
+
+  async function updateSharePasscode(shareLinkId: string, action: "rotate" | "remove") {
+    if (!selected) return;
+    if (action === "remove" && !window.confirm("Remove passcode protection from this link?")) return;
+    const nextPasscode = action === "remove" ? "" : window.prompt("Enter new passcode (min 4 chars):", "");
+    if (nextPasscode === null) return;
+    setShareBusy(true);
+    setShareError(null);
+    try {
+      const res = await fetch(`/api/share-links/${shareLinkId}/passcode`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ passcode: nextPasscode })
+      });
+      const payload = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(payload.error || `Failed to update passcode (${res.status})`);
+      await loadShareLinks(selected.id);
+    } catch (error) {
+      setShareError(error instanceof Error ? error.message : "Failed to update passcode");
+    } finally {
+      setShareBusy(false);
     }
   }
 
   React.useEffect(() => {
-    if (copyStatus === "idle") return;
-    const timer = window.setTimeout(() => setCopyStatus("idle"), 1800);
-    return () => window.clearTimeout(timer);
-  }, [copyStatus]);
+    if (!selected || !shareOpen) return;
+    void loadShareLinks(selected.id);
+  }, [selected?.id, shareOpen]);
 
   React.useEffect(() => {
-    setPublishError(null);
-  }, [selected?.id]);
+    if (!shareNotice) return;
+    const timer = window.setTimeout(() => setShareNotice(null), 1600);
+    return () => window.clearTimeout(timer);
+  }, [shareNotice]);
 
   return (
     <div className="luminon-shell" data-theme={selected?.themePreset ?? "clean"}>
@@ -2962,9 +3247,87 @@ function App() {
           </div>}
           <div className="luminon-nav">
             {loading && !collapsed && <p className="luminon-loading">Loading...</p>}
+            {!loading && !collapsed && dashboardGroups.length > 0 && (
+              <div className="luminon-group-filter">
+                <p className="luminon-group-filter-title">Groups</p>
+                <select
+                  className="luminon-group-select"
+                  value={activeGroupId ?? ""}
+                  onChange={(event) => setActiveGroupId(event.target.value || null)}
+                  aria-label="Filter dashboards by group"
+                >
+                  <option value="">All dashboards</option>
+                  {orderedGroups.map((group) => (
+                    <option key={group.id} value={group.id}>
+                      {group.name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className={`luminon-group-chip ${activeGroupId === null ? "active" : ""}`}
+                  onClick={() => setActiveGroupId(null)}
+                >
+                  All dashboards
+                </button>
+                {visibleGroups.map((group) => (
+                  <button
+                    key={group.id}
+                    type="button"
+                    className={`luminon-group-chip ${activeGroupId === group.id ? "active" : ""}`}
+                    onClick={() => setActiveGroupId(group.id)}
+                    title={group.name}
+                  >
+                    {group.name}
+                  </button>
+                ))}
+                {overflowGroups.length > 0 && (
+                  <div className="luminon-group-more-wrap">
+                    <button
+                      type="button"
+                      className={`luminon-group-chip ${groupMenuOpen ? "active" : ""}`}
+                      onClick={() => setGroupMenuOpen((open) => !open)}
+                    >
+                      More ({overflowGroups.length})
+                    </button>
+                    {groupMenuOpen && (
+                      <div className="luminon-group-more-menu">
+                        <input
+                          className="luminon-group-more-search"
+                          value={groupSearchQuery}
+                          onChange={(event) => setGroupSearchQuery(event.target.value)}
+                          placeholder="Search groups"
+                          aria-label="Search additional groups"
+                        />
+                        <div className="luminon-group-more-list">
+                          {filteredOverflowGroups.length === 0 && (
+                            <p className="luminon-group-more-empty">No matching groups.</p>
+                          )}
+                          {filteredOverflowGroups.map((group) => (
+                            <button
+                              key={group.id}
+                              type="button"
+                              className={`luminon-group-more-item ${activeGroupId === group.id ? "active" : ""}`}
+                              onClick={() => {
+                                setActiveGroupId(group.id);
+                                setGroupMenuOpen(false);
+                              }}
+                            >
+                              {group.name}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
             {!loading && dashboards.length === 0 && !collapsed && <p className="luminon-empty">No dashboards.</p>}
             {!loading && filteredDashboards.length === 0 && dashboards.length > 0 && !collapsed && (
-              <p className="luminon-empty">No results for "{searchQuery}".</p>
+              <p className="luminon-empty">
+                {searchQuery.trim().length > 0 ? `No results for "${searchQuery}".` : "No dashboards in this group."}
+              </p>
             )}
             {filteredDashboards.map((dashboard) => {
               const words = dashboard.name.split(/[\s_-]+/).filter(word => word.length > 0);
@@ -3073,53 +3436,73 @@ function App() {
                         <span>Rename</span>
                       </button>
                       <button
-                        onClick={() => !isReadOnlyDemo && void togglePublishState()}
-                        className={`luminon-action-btn toggle ${selected.published ? "active" : ""}`}
-                        aria-pressed={selected.published}
-                        disabled={publishing || isReadOnlyDemo}
-                        title={
-                          selected.published
-                            ? "Unpublish this dashboard"
-                            : "Publish this dashboard to share it"
-                        }
-                      >
-                        <svg aria-hidden="true" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <circle cx="12" cy="12" r="7.5" strokeWidth={1.8} />
-                          {selected.published ? (
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9 12l2 2 4-4" />
-                          ) : (
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M8 8l8 8" />
-                          )}
-                        </svg>
-                        <span>{selected.published ? "Published" : "Private"}</span>
-                      </button>
-                      <button
-                        onClick={() => void copyDashboardUrl()}
-                        className={`luminon-action-btn ${copyStatus === "copied" ? "success" : ""}`}
-                        title={
-                          canShare ? "Copy sharable URL" : "Publish the dashboard to generate a link"
-                        }
-                        disabled={!canShare}
+                        onClick={() => {
+                          setShareOpen((open) => !open);
+                        }}
+                        className="luminon-action-btn"
+                        title="Open secure sharing options"
                       >
                         <svg aria-hidden="true" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
                         </svg>
                         <span>
-                          {copyStatus === "copied"
-                            ? "Copied"
-                            : copyStatus === "error"
-                              ? "Failed to copy"
-                              : "Copy URL"}
+                          Share
                         </span>
                       </button>
                     </div>
                   </div>
+                  {shareOpen && selected && (
+                    <div className="luminon-share-panel">
+                      <p className="luminon-share-title">Secure sharing</p>
+                      <div className="luminon-share-create">
+                        <input
+                          className="luminon-share-input"
+                          placeholder="Link label (optional)"
+                          value={shareLabel}
+                          onChange={(event) => setShareLabel(event.target.value)}
+                        />
+                        <input
+                          className="luminon-share-input"
+                          type="password"
+                          placeholder="Passcode (recommended, min 4)"
+                          value={sharePasscode}
+                          onChange={(event) => setSharePasscode(event.target.value)}
+                        />
+                        <button className="luminon-title-btn primary luminon-share-create-btn" onClick={() => void createShareLink()} disabled={shareBusy}>
+                          Create link
+                        </button>
+                      </div>
+                      {shareError && <p className="luminon-error">{shareError}</p>}
+                      {shareNotice && <p className="luminon-loading">{shareNotice}</p>}
+                      {shareLoading ? (
+                        <p className="luminon-loading">Loading share links...</p>
+                      ) : (
+                        <div className="luminon-share-list">
+                          {shareLinks.length === 0 && <p className="luminon-empty">No active share links.</p>}
+                          {shareLinks.map((link) => (
+                            <div key={link.id} className="luminon-share-item">
+                              <div className="luminon-share-meta">
+                                <strong>{link.label || "Share link"}</strong>
+                                <span>{link.passcodeProtected ? "Passcode protected" : "No passcode"}</span>
+                              </div>
+                              <div className="luminon-share-actions">
+                                <button className="luminon-title-btn" onClick={() => void copyShareUrl(link.shareUrl)}>Copy link</button>
+                                <button className="luminon-title-btn" onClick={() => void updateSharePasscode(link.id, "rotate")}>Rotate passcode</button>
+                                <button className="luminon-title-btn" onClick={() => void updateSharePasscode(link.id, "remove")}>Remove passcode</button>
+                                <button className="luminon-title-btn" onClick={() => void revokeShareLink(link.id)}>Revoke</button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                   {selected.subtitle && <p className="luminon-hero-sub">{selected.subtitle}</p>}
                   <div className="luminon-meta">
                       <div className="luminon-pill">
                         <span className="luminon-pill-label">Status</span>
                         <span className="luminon-pill-value">
-                          {selected.published ? "Published" : "Private"} · {selected.charts.length} charts · {countUniqueDatasets(selected)} datasets · id : {selected.id}
+                          {selected.published ? "Published" : "Private"} · {countDashboardCharts(selected)} charts · {countUniqueDatasets(selected)} datasets · id : {selected.id}
                         </span>
                       </div>
                   </div>
@@ -3147,7 +3530,6 @@ function App() {
                 />
               </div>
               {renameError && <p className="luminon-error">{renameError}</p>}
-              {publishError && <p className="luminon-error">{publishError}</p>}
             </>
           ) : (
             <p className="luminon-empty">Select a dashboard.</p>

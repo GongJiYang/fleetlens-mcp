@@ -27,6 +27,20 @@ import {
   undoDashboardInputSchema,
   restoreDeletedDashboardInputSchema,
   restoreDatasetSnapshotInputSchema,
+  createDashboardPageInputSchema,
+  copyDashboardPageInputSchema,
+  importDashboardPagesInputSchema,
+  updateDashboardPageInputSchema,
+  deleteDashboardPageInputSchema,
+  listDashboardPagesInputSchema,
+  moveChartToPageInputSchema,
+  createDashboardFolderInputSchema,
+  listDashboardFoldersInputSchema,
+  createDashboardGroupInputSchema,
+  listDashboardGroupsInputSchema,
+  addDashboardGroupItemInputSchema,
+  removeDashboardGroupItemInputSchema,
+  moveDashboardToFolderInputSchema,
   type Chart,
   type Dashboard,
   type DashboardFilter,
@@ -998,6 +1012,287 @@ export function createLuminonMcpServer(options?: {
           dashboard: summarizeDashboard(dashboard),
           filters: (dashboard.filters ?? []).map((filter) => summarizeFilter(filter))
         });
+      }
+    );
+  }
+
+  if (toolEnabled("list_dashboard_pages", toolMode)) {
+    server.tool(
+      "list_dashboard_pages",
+      "List pages for a dashboard.",
+      { input: listDashboardPagesInputSchema },
+      async ({ input }, extra) => {
+        const context = await authorizeRequest(
+          policyAdapter,
+          "dashboard.read",
+          { kind: "dashboard", dashboardId: input.dashboardId },
+          extra,
+          { enforcePolicy, requestSource }
+        );
+        const pages = await backend.listDashboardPages(input, context);
+        return textResponse(
+          toTable(
+            ["id", "name", "slug", "pageOrder", "charts"],
+            pages.map((page) => [
+              page.id,
+              page.name,
+              page.slug,
+              String(page.pageOrder),
+              String(page.charts.length)
+            ])
+          )
+        );
+      }
+    );
+  }
+
+  if (toolEnabled("create_dashboard_page", toolMode)) {
+    server.tool(
+      "create_dashboard_page",
+      "Create a new page in a dashboard.",
+      { input: createDashboardPageInputSchema },
+      async ({ input }, extra) => {
+        const context = await authorizeRequest(
+          policyAdapter,
+          "dashboard.write",
+          { kind: "dashboard", dashboardId: input.dashboardId },
+          extra,
+          { enforcePolicy, requestSource }
+        );
+        const dashboard = await backend.createDashboardPage(input, context);
+        return dashboardResponse(dashboard);
+      }
+    );
+  }
+
+  if (toolEnabled("update_dashboard_page", toolMode)) {
+    server.tool(
+      "update_dashboard_page",
+      "Update dashboard page metadata (name/slug/order).",
+      { input: updateDashboardPageInputSchema },
+      async ({ input }, extra) => {
+        const context = await authorizeRequest(
+          policyAdapter,
+          "dashboard.write",
+          { kind: "dashboard", dashboardId: input.dashboardId },
+          extra,
+          { enforcePolicy, requestSource }
+        );
+        const dashboard = await backend.updateDashboardPage(input, context);
+        return dashboardResponse(dashboard);
+      }
+    );
+  }
+
+  if (toolEnabled("delete_dashboard_page", toolMode)) {
+    server.tool(
+      "delete_dashboard_page",
+      "Delete a dashboard page. Requires confirm: \"DELETE\".",
+      { input: deleteDashboardPageInputSchema },
+      async ({ input }, extra) => {
+        const context = await authorizeRequest(
+          policyAdapter,
+          "dashboard.write",
+          { kind: "dashboard", dashboardId: input.dashboardId },
+          extra,
+          { enforcePolicy, requestSource }
+        );
+        const dashboard = await backend.deleteDashboardPage(input, context);
+        return dashboardResponse(dashboard);
+      }
+    );
+  }
+
+  if (toolEnabled("move_chart_to_page", toolMode)) {
+    server.tool(
+      "move_chart_to_page",
+      "Move a chart from one dashboard/page into another page.",
+      { input: moveChartToPageInputSchema },
+      async ({ input }, extra) => {
+        const context = await authorizeRequest(
+          policyAdapter,
+          "dashboard.write",
+          { kind: "dashboard", dashboardId: input.sourceDashboardId },
+          extra,
+          { enforcePolicy, requestSource }
+        );
+        const dashboard = await backend.moveChartToPage(input, context);
+        return dashboardResponse(dashboard, {
+          chartId: input.chartId,
+          sourceDashboardId: input.sourceDashboardId,
+          targetDashboardId: input.targetDashboardId
+        });
+      }
+    );
+  }
+
+  if (toolEnabled("copy_dashboard_page", toolMode)) {
+    server.tool(
+      "copy_dashboard_page",
+      "Copy a dashboard page into another dashboard page, creating the target page when needed.",
+      { input: copyDashboardPageInputSchema },
+      async ({ input }, extra) => {
+        const context = await authorizeRequest(
+          policyAdapter,
+          "dashboard.write",
+          { kind: "dashboard", dashboardId: input.sourceDashboardId },
+          extra,
+          { enforcePolicy, requestSource }
+        );
+        const dashboard = await backend.copyDashboardPage(input, context);
+        return dashboardResponse(dashboard, {
+          sourceDashboardId: input.sourceDashboardId,
+          targetDashboardId: input.targetDashboardId
+        });
+      }
+    );
+  }
+
+  if (toolEnabled("import_dashboard_pages", toolMode)) {
+    server.tool(
+      "import_dashboard_pages",
+      "Import one or more pages from a source dashboard into a target dashboard as new pages.",
+      { input: importDashboardPagesInputSchema },
+      async ({ input }, extra) => {
+        const context = await authorizeRequest(
+          policyAdapter,
+          "dashboard.write",
+          { kind: "dashboard", dashboardId: input.sourceDashboardId },
+          extra,
+          { enforcePolicy, requestSource }
+        );
+        const dashboard = await backend.importDashboardPages(input, context);
+        return dashboardResponse(dashboard, {
+          sourceDashboardId: input.sourceDashboardId,
+          targetDashboardId: input.targetDashboardId
+        });
+      }
+    );
+  }
+
+  if (toolEnabled("create_dashboard_folder", toolMode)) {
+    server.tool(
+      "create_dashboard_folder",
+      "Create a dashboard folder.",
+      { input: createDashboardFolderInputSchema },
+      async ({ input }, extra) => {
+        const context = await authorizeRequest(
+          policyAdapter,
+          "dashboard.write",
+          { kind: "dashboard", workspaceId: input.workspaceId },
+          extra,
+          { enforcePolicy, requestSource }
+        );
+        return jsonResponse({ ok: true, folder: await backend.createDashboardFolder(input, context) });
+      }
+    );
+  }
+
+  if (toolEnabled("list_dashboard_folders", toolMode)) {
+    server.tool(
+      "list_dashboard_folders",
+      "List dashboard folders.",
+      { input: listDashboardFoldersInputSchema },
+      async ({ input }, extra) => {
+        const context = await authorizeRequest(
+          policyAdapter,
+          "dashboard.read",
+          { kind: "dashboard", workspaceId: input.workspaceId },
+          extra,
+          { enforcePolicy, requestSource }
+        );
+        return jsonResponse({ ok: true, folders: await backend.listDashboardFolders(input, context) });
+      }
+    );
+  }
+
+  if (toolEnabled("move_dashboard_to_folder", toolMode)) {
+    server.tool(
+      "move_dashboard_to_folder",
+      "Attach/detach a dashboard to/from a folder.",
+      { input: moveDashboardToFolderInputSchema },
+      async ({ input }, extra) => {
+        const context = await authorizeRequest(
+          policyAdapter,
+          "dashboard.write",
+          { kind: "dashboard", dashboardId: input.dashboardId },
+          extra,
+          { enforcePolicy, requestSource }
+        );
+        const dashboard = await backend.moveDashboardToFolder(input, context);
+        return dashboardResponse(dashboard);
+      }
+    );
+  }
+
+  if (toolEnabled("create_dashboard_group", toolMode)) {
+    server.tool(
+      "create_dashboard_group",
+      "Create a dashboard group.",
+      { input: createDashboardGroupInputSchema },
+      async ({ input }, extra) => {
+        const context = await authorizeRequest(
+          policyAdapter,
+          "dashboard.write",
+          { kind: "dashboard", workspaceId: input.workspaceId },
+          extra,
+          { enforcePolicy, requestSource }
+        );
+        return jsonResponse({ ok: true, group: await backend.createDashboardGroup(input, context) });
+      }
+    );
+  }
+
+  if (toolEnabled("list_dashboard_groups", toolMode)) {
+    server.tool(
+      "list_dashboard_groups",
+      "List dashboard groups.",
+      { input: listDashboardGroupsInputSchema },
+      async ({ input }, extra) => {
+        const context = await authorizeRequest(
+          policyAdapter,
+          "dashboard.read",
+          { kind: "dashboard", workspaceId: input.workspaceId },
+          extra,
+          { enforcePolicy, requestSource }
+        );
+        return jsonResponse({ ok: true, groups: await backend.listDashboardGroups(input, context) });
+      }
+    );
+  }
+
+  if (toolEnabled("add_dashboard_group_item", toolMode)) {
+    server.tool(
+      "add_dashboard_group_item",
+      "Add a dashboard to a group.",
+      { input: addDashboardGroupItemInputSchema },
+      async ({ input }, extra) => {
+        const context = await authorizeRequest(
+          policyAdapter,
+          "dashboard.write",
+          { kind: "dashboard", dashboardId: input.dashboardId },
+          extra,
+          { enforcePolicy, requestSource }
+        );
+        return jsonResponse({ ok: true, group: await backend.addDashboardGroupItem(input, context) });
+      }
+    );
+  }
+
+  if (toolEnabled("remove_dashboard_group_item", toolMode)) {
+    server.tool(
+      "remove_dashboard_group_item",
+      "Remove a dashboard from a group.",
+      { input: removeDashboardGroupItemInputSchema },
+      async ({ input }, extra) => {
+        const context = await authorizeRequest(
+          policyAdapter,
+          "dashboard.write",
+          { kind: "dashboard", dashboardId: input.dashboardId },
+          extra,
+          { enforcePolicy, requestSource }
+        );
+        return jsonResponse({ ok: true, group: await backend.removeDashboardGroupItem(input, context) });
       }
     );
   }

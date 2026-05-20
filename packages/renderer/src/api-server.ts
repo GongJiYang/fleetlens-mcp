@@ -1,7 +1,9 @@
 import express from "express";
 import cors from "cors";
 import fsSync from "node:fs";
+import fs from "node:fs/promises";
 import { watch } from "node:fs";
+import { createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { DataPaths, LocalWorkspaceStorage, RequestContext } from "../../core/dist/index.js";
@@ -21,8 +23,8 @@ async function loadStorageModule(): Promise<{
   requestContext: RequestContext;
 }> {
   const candidates = [
-    path.resolve(__dirname, "../../mcp-server/src/local-workspace-storage.ts"),
-    path.resolve(__dirname, "../../mcp-server/dist/local-workspace-storage.js")
+    path.resolve(__dirname, "../../mcp-server/dist/local-workspace-storage.js"),
+    path.resolve(__dirname, "../../mcp-server/src/local-workspace-storage.ts")
   ];
 
   for (const candidate of candidates) {
@@ -53,6 +55,7 @@ const {
   ensureUserDataFiles,
   getDataPaths,
   listDashboards,
+  listDashboardGroups,
   listDatasets,
   removeDashboardFilter,
   renameDashboard,
@@ -64,6 +67,7 @@ const { requestContext } = loadedStorageModule;
 const dataPaths = getDataPaths();
 const DATA_FILE = dataPaths.dashboards;
 const DATASETS_FILE = dataPaths.datasets;
+const SHARE_LINKS_FILE = path.join(dataPaths.baseDir, "share_links.json");
 const STATIC_WEB_DIR = resolveStaticWebDir();
 const SERVE_STATIC_WEB = process.env.LUMINON_RENDERER_STATIC === "true" && Boolean(STATIC_WEB_DIR);
 
@@ -74,6 +78,108 @@ app.use(cors());
 app.use(express.json());
 const sseClients = new Set<express.Response>();
 let lastBroadcastAt = 0;
+const SHARE_LINK_MAX_ACTIVE_PER_DASHBOARD = Number(process.env.LUMINON_SHARE_MAX_ACTIVE ?? 10);
+const SHARE_RATE_WINDOW_MS = Number(process.env.LUMINON_SHARE_RATE_WINDOW_MS ?? 60_000);
+const SHARE_RATE_MAX_REQUESTS = Number(process.env.LUMINON_SHARE_RATE_MAX_REQUESTS ?? 120);
+
+type ShareLinkRecord = {
+  id: string;
+  dashboardId: string;
+  label: string | null;
+  publicToken: string;
+  expiresAt: string | null;
+  revokedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  passcodeHash: string | null;
+  passcodeSalt: string | null;
+};
+
+type RateBucket = {
+  count: number;
+  windowStart: number;
+};
+
+const sharedRequestRate = new Map<string, RateBucket>();
+
+async function ensureShareLinksStore(): Promise<void> {
+  if (fsSync.existsSync(SHARE_LINKS_FILE)) return;
+  await fs.writeFile(SHARE_LINKS_FILE, JSON.stringify({ shareLinks: [] }, null, 2), "utf8");
+}
+
+async function readShareLinks(): Promise<ShareLinkRecord[]> {
+  await ensureShareLinksStore();
+  try {
+    const raw = JSON.parse(await fs.readFile(SHARE_LINKS_FILE, "utf8")) as { shareLinks?: ShareLinkRecord[] };
+    return Array.isArray(raw.shareLinks) ? raw.shareLinks : [];
+  } catch {
+    return [];
+  }
+}
+
+async function writeShareLinks(shareLinks: ShareLinkRecord[]): Promise<void> {
+  await fs.writeFile(SHARE_LINKS_FILE, JSON.stringify({ shareLinks }, null, 2), "utf8");
+}
+
+function derivePasscodeHash(passcode: string, salt: string): string {
+  return scryptSync(passcode, salt, 32).toString("hex");
+}
+
+function legacyPasscodeHash(passcode: string): string {
+  return createHash("sha256").update(passcode).digest("hex");
+}
+
+function secureEqualHex(left: string, right: string): boolean {
+  try {
+    const a = Buffer.from(left, "hex");
+    const b = Buffer.from(right, "hex");
+    if (a.length !== b.length) return false;
+    return timingSafeEqual(a, b);
+  } catch {
+    return false;
+  }
+}
+
+function verifyPasscode(record: ShareLinkRecord, passcode: string): boolean {
+  if (!record.passcodeHash) return true;
+  if (record.passcodeSalt) {
+    return secureEqualHex(record.passcodeHash, derivePasscodeHash(passcode, record.passcodeSalt));
+  }
+  // Backward compatibility for previously created links before salted hashing.
+  return secureEqualHex(record.passcodeHash, legacyPasscodeHash(passcode));
+}
+
+function nowIso(): string {
+  return new Date().toISOString();
+}
+
+function makeShareToken(): string {
+  return `lbs_${randomBytes(18).toString("base64url")}`;
+}
+
+function requestIp(req: express.Request): string {
+  const forwarded = req.headers["x-forwarded-for"];
+  if (typeof forwarded === "string" && forwarded.trim().length > 0) {
+    return forwarded.split(",")[0]!.trim();
+  }
+  return req.ip || "unknown";
+}
+
+function rateLimitShared(req: express.Request, res: express.Response): boolean {
+  const key = requestIp(req);
+  const now = Date.now();
+  const bucket = sharedRequestRate.get(key);
+  if (!bucket || now - bucket.windowStart > SHARE_RATE_WINDOW_MS) {
+    sharedRequestRate.set(key, { count: 1, windowStart: now });
+    return true;
+  }
+  if (bucket.count >= SHARE_RATE_MAX_REQUESTS) {
+    res.status(429).json({ error: "Too many shared requests. Try again shortly." });
+    return false;
+  }
+  bucket.count += 1;
+  return true;
+}
 
 async function readDashboards(): Promise<Dashboard[]> {
   return listDashboards(requestContext);
@@ -101,6 +207,272 @@ app.get("/api/health", (_req, res) => {
 app.get("/api/dashboards", async (_req, res) => {
   const dashboards = await readDashboards();
   res.json({ dashboards });
+});
+
+app.get("/api/dashboard-groups", async (_req, res) => {
+  const [dashboards, groups] = await Promise.all([
+    readDashboards(),
+    listDashboardGroups({}, requestContext)
+  ]);
+  const dashboardNameById = new Map(dashboards.map((dashboard) => [dashboard.id, dashboard.name]));
+  res.json({
+    groups: groups.map((group) => ({
+      id: group.id,
+      name: group.name,
+      slug: group.slug,
+      sortOrder: group.sortOrder ?? 0,
+      items: (group.items ?? [])
+        .filter((item) => dashboardNameById.has(item.dashboardId))
+        .sort((left, right) => (left.sortOrder ?? 0) - (right.sortOrder ?? 0))
+        .map((item) => ({
+          dashboardId: item.dashboardId,
+          dashboardName: dashboardNameById.get(item.dashboardId) ?? item.dashboardId,
+          sortOrder: item.sortOrder ?? 0
+        }))
+    }))
+  });
+});
+
+app.get("/api/dashboards/:id/share-links", async (req, res) => {
+  const shareLinks = await readShareLinks();
+  const active = shareLinks.filter((entry) => entry.dashboardId === req.params.id && !entry.revokedAt);
+  res.json({
+    shareLinks: active.map((entry) => ({
+      ...entry,
+      shareUrl: `/shared/${encodeURIComponent(entry.publicToken)}`
+    }))
+  });
+});
+
+app.post("/api/dashboards/:id/share-links", async (req, res) => {
+  const dashboards = await readDashboards();
+  const dashboard = dashboards.find((entry) => entry.id === req.params.id);
+  if (!dashboard) {
+    res.status(404).json({ error: "Dashboard not found" });
+    return;
+  }
+
+  const body = req.body as { label?: unknown; expiresAt?: unknown; passcode?: unknown };
+  const expiresAt =
+    typeof body.expiresAt === "string" && body.expiresAt.trim().length > 0 ? new Date(body.expiresAt).toISOString() : null;
+  if (expiresAt && Number.isNaN(Date.parse(expiresAt))) {
+    res.status(400).json({ error: "Invalid expiresAt" });
+    return;
+  }
+
+  const passcode = typeof body.passcode === "string" && body.passcode.trim().length > 0 ? body.passcode.trim() : null;
+  if (passcode && passcode.length < 4) {
+    res.status(400).json({ error: "Passcode must have at least 4 characters" });
+    return;
+  }
+
+  const createdAt = nowIso();
+  const shareLink: ShareLinkRecord = {
+    id: `shr_${randomBytes(8).toString("hex")}`,
+    dashboardId: dashboard.id,
+    label: typeof body.label === "string" && body.label.trim().length > 0 ? body.label.trim() : null,
+    publicToken: makeShareToken(),
+    expiresAt,
+    revokedAt: null,
+    createdAt,
+    updatedAt: createdAt,
+    passcodeHash: null,
+    passcodeSalt: passcode ? randomBytes(16).toString("hex") : null
+  };
+  if (passcode && shareLink.passcodeSalt) {
+    shareLink.passcodeHash = derivePasscodeHash(passcode, shareLink.passcodeSalt);
+  }
+
+  const shareLinks = await readShareLinks();
+  const activeForDashboard = shareLinks.filter((entry) => entry.dashboardId === dashboard.id && !entry.revokedAt).length;
+  if (activeForDashboard >= SHARE_LINK_MAX_ACTIVE_PER_DASHBOARD) {
+    res.status(400).json({
+      error: `Dashboard reached active share link limit (${SHARE_LINK_MAX_ACTIVE_PER_DASHBOARD}). Revoke an existing link first.`
+    });
+    return;
+  }
+  shareLinks.push(shareLink);
+  await writeShareLinks(shareLinks);
+  res.status(201).json({
+    shareLink: {
+      ...shareLink,
+      shareUrl: `/shared/${encodeURIComponent(shareLink.publicToken)}`,
+      passcodeProtected: Boolean(shareLink.passcodeHash)
+    },
+    shareUrl: `/shared/${encodeURIComponent(shareLink.publicToken)}`
+  });
+});
+
+app.post("/api/share-links/:id/revoke", async (req, res) => {
+  const shareLinks = await readShareLinks();
+  const link = shareLinks.find((entry) => entry.id === req.params.id);
+  if (!link) {
+    res.status(404).json({ error: "Share link not found" });
+    return;
+  }
+  if (!link.revokedAt) {
+    link.revokedAt = nowIso();
+    link.updatedAt = link.revokedAt;
+    await writeShareLinks(shareLinks);
+  }
+  res.json({ shareLink: link });
+});
+
+app.post("/api/share-links/:id/passcode", async (req, res) => {
+  const body = req.body as { passcode?: unknown };
+  if (body.passcode !== undefined && typeof body.passcode !== "string") {
+    res.status(400).json({ error: "passcode must be a string or omitted" });
+    return;
+  }
+
+  const nextPasscode = typeof body.passcode === "string" ? body.passcode.trim() : "";
+  if (nextPasscode.length > 0 && nextPasscode.length < 4) {
+    res.status(400).json({ error: "Passcode must have at least 4 characters" });
+    return;
+  }
+
+  const shareLinks = await readShareLinks();
+  const link = shareLinks.find((entry) => entry.id === req.params.id);
+  if (!link) {
+    res.status(404).json({ error: "Share link not found" });
+    return;
+  }
+  if (link.revokedAt) {
+    res.status(400).json({ error: "Cannot update passcode for a revoked share link" });
+    return;
+  }
+
+  if (nextPasscode.length === 0) {
+    link.passcodeHash = null;
+    link.passcodeSalt = null;
+  } else {
+    const salt = randomBytes(16).toString("hex");
+    link.passcodeSalt = salt;
+    link.passcodeHash = derivePasscodeHash(nextPasscode, salt);
+  }
+  link.updatedAt = nowIso();
+  await writeShareLinks(shareLinks);
+  res.json({
+    shareLink: {
+      ...link,
+      passcodeProtected: Boolean(link.passcodeHash)
+    }
+  });
+});
+
+app.get("/api/shared/:token", async (req, res) => {
+  if (!rateLimitShared(req, res)) return;
+  const shareLinks = await readShareLinks();
+  const token = req.params.token;
+  const link = shareLinks.find((entry) => entry.publicToken === token);
+  if (!link || link.revokedAt) {
+    res.status(404).json({ error: "Share link not found" });
+    return;
+  }
+
+  if (link.expiresAt && Date.parse(link.expiresAt) <= Date.now()) {
+    res.status(410).json({ error: "Share link expired" });
+    return;
+  }
+
+  if (link.passcodeHash) {
+    const providedRaw = (req.headers["x-share-passcode"] ?? req.query.passcode) as string | undefined;
+    const provided = typeof providedRaw === "string" ? providedRaw.trim() : "";
+    if (!provided || !verifyPasscode(link, provided)) {
+      res.status(401).json({ error: "Passcode required", passcodeRequired: true });
+      return;
+    }
+  }
+
+  const dashboards = await readDashboards();
+  const dashboard = dashboards.find((entry) => entry.id === link.dashboardId);
+  if (!dashboard) {
+    res.status(404).json({ error: "Dashboard not found" });
+    return;
+  }
+
+  res.json({
+    dashboard,
+    access: { authenticated: false, role: "viewer", workspaceId: dashboard.workspaceId ?? null, via: "share_link" },
+    shareLink: {
+      id: link.id,
+      label: link.label,
+      expiresAt: link.expiresAt,
+      shareUrl: `/shared/${encodeURIComponent(link.publicToken)}`
+    }
+  });
+});
+
+app.get("/shared/:token", (_req, res) => {
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.send(`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Luminon Shared Dashboard</title>
+  <style>
+    :root { color-scheme: light; }
+    body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif; background: #f6f8fb; color: #111827; }
+    .wrap { max-width: 920px; margin: 48px auto; background: white; border: 1px solid #e5e7eb; border-radius: 12px; padding: 20px; }
+    .muted { color: #6b7280; }
+    .row { margin: 10px 0; }
+    input { padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 8px; }
+    button { padding: 8px 12px; border-radius: 8px; border: 1px solid #111827; background: #111827; color: white; cursor: pointer; }
+    pre { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; overflow: auto; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Shared Dashboard</h1>
+    <p class="muted">Read-only access via secure share link.</p>
+    <div class="row">
+      <label for="passcode">Passcode (if required):</label>
+      <input id="passcode" type="password" />
+      <button id="load">Load</button>
+    </div>
+    <div id="state" class="muted">Waiting to load...</div>
+  </div>
+  <script>
+    const token = location.pathname.split("/").pop();
+    const state = document.getElementById("state");
+    const passcode = document.getElementById("passcode");
+    const load = document.getElementById("load");
+    async function fetchShared() {
+      state.textContent = "Loading shared dashboard...";
+      const headers = {};
+      const value = (passcode.value || "").trim();
+      if (value) headers["x-share-passcode"] = value;
+      const res = await fetch("/api/shared/" + encodeURIComponent(token), { headers });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        state.textContent = body.error || "Failed to load.";
+        if (body.passcodeRequired) state.textContent += " Enter passcode.";
+        return;
+      }
+      state.textContent = "Loaded. Redirecting...";
+      const dashboardId = body && body.dashboard && body.dashboard.id;
+      if (!dashboardId) {
+        state.textContent = "Loaded but dashboard id is missing.";
+        return;
+      }
+      const query = new URLSearchParams({ shareToken: token });
+      if (value) {
+        window.sessionStorage.setItem("luminon.share.passcode." + token, value);
+      }
+      window.location.href = "/dashboards/" + encodeURIComponent(dashboardId) + "?" + query.toString();
+    }
+    load.addEventListener("click", () => { void fetchShared(); });
+    passcode.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        void fetchShared();
+      }
+    });
+    void fetchShared();
+  </script>
+</body>
+</html>`);
 });
 
 function buildDatasetValueMap(datasets: Dataset[]) {

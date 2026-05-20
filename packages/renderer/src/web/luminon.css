@@ -229,6 +229,118 @@ body {
   padding-right: 4px;
 }
 
+.luminon-group-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.luminon-group-filter-title {
+  width: 100%;
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--luminon-muted);
+}
+
+.luminon-group-chip {
+  border: 1px solid var(--luminon-border);
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: var(--luminon-input-bg);
+  color: var(--luminon-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.luminon-group-chip.active {
+  border-color: var(--luminon-primary);
+  background: var(--luminon-primary-soft);
+  color: var(--luminon-primary);
+}
+
+.luminon-group-select {
+  display: none;
+  width: 100%;
+  border: 1px solid var(--luminon-border);
+  border-radius: 10px;
+  background: var(--luminon-input-bg);
+  color: var(--luminon-fg);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 10px;
+}
+
+.luminon-group-more-wrap {
+  position: relative;
+}
+
+.luminon-group-more-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  width: 260px;
+  max-height: 280px;
+  overflow: hidden;
+  border: 1px solid var(--luminon-border);
+  border-radius: 12px;
+  background: var(--luminon-card);
+  box-shadow: var(--luminon-shadow);
+  z-index: 25;
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+}
+
+.luminon-group-more-search {
+  width: 100%;
+  border: 1px solid var(--luminon-border);
+  border-radius: 10px;
+  background: var(--luminon-input-bg);
+  color: var(--luminon-fg);
+  font-size: 13px;
+  padding: 8px 10px;
+}
+
+.luminon-group-more-list {
+  display: grid;
+  gap: 6px;
+  overflow: auto;
+}
+
+.luminon-group-more-item {
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--luminon-secondary);
+  text-align: left;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.luminon-group-more-item:hover {
+  background: var(--luminon-nav-hover);
+  border-color: color-mix(in srgb, var(--luminon-primary) 30%, transparent);
+}
+
+.luminon-group-more-item.active {
+  border-color: var(--luminon-primary);
+  background: var(--luminon-primary-soft);
+  color: var(--luminon-primary);
+}
+
+.luminon-group-more-empty {
+  margin: 0;
+  font-size: 12px;
+  color: var(--luminon-muted);
+  padding: 6px 2px;
+}
+
 .luminon-nav-item {
   width: 100%;
   border: 1px solid transparent;
@@ -339,6 +451,62 @@ body {
   color: var(--luminon-primary);
   background: var(--luminon-primary-soft);
   box-shadow: 0 10px 24px -14px color-mix(in srgb, var(--luminon-primary) 55%, transparent);
+}
+
+.luminon-page-tabs {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 0 0 16px;
+}
+
+.luminon-page-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--luminon-border);
+  background: var(--luminon-card);
+  color: var(--luminon-secondary);
+  padding: 10px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  transition: border-color 140ms ease, box-shadow 140ms ease, color 140ms ease, background 140ms ease, transform 140ms ease;
+}
+
+.luminon-page-tab:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 24px -18px rgba(0, 0, 0, 0.18);
+}
+
+.luminon-page-tab.is-active {
+  border-color: var(--luminon-primary);
+  color: var(--luminon-primary);
+  background: var(--luminon-primary-soft);
+  box-shadow: 0 10px 24px -14px color-mix(in srgb, var(--luminon-primary) 55%, transparent);
+}
+
+.luminon-page-tab-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: min(34vw, 260px);
+}
+
+.luminon-page-tab-meta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--luminon-primary) 12%, transparent);
+  color: var(--luminon-primary);
+  font-size: 11px;
+  font-weight: 800;
 }
 
 .luminon-guide-card {
@@ -642,6 +810,69 @@ html.theme-dark .luminon-hero-title {
   gap: 10px;
 }
 
+.luminon-share-panel {
+  margin-top: 12px;
+  border: 1px solid var(--luminon-border);
+  border-radius: 12px;
+  background: var(--luminon-card);
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.luminon-share-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--luminon-muted);
+}
+
+.luminon-share-create {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto auto;
+  gap: 8px;
+}
+
+.luminon-share-input {
+  border: 1px solid var(--luminon-border);
+  border-radius: 10px;
+  background: var(--luminon-input-bg);
+  color: var(--luminon-fg);
+  padding: 8px 10px;
+  font-size: 13px;
+}
+
+.luminon-share-list {
+  display: grid;
+  gap: 8px;
+}
+
+.luminon-share-item {
+  border: 1px solid var(--luminon-border);
+  border-radius: 10px;
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.luminon-share-meta {
+  display: grid;
+  gap: 2px;
+}
+
+.luminon-share-meta span {
+  font-size: 12px;
+  color: var(--luminon-muted);
+}
+
+.luminon-share-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .luminon-title-btn {
   border: 1px solid var(--luminon-border);
   background: var(--luminon-title-btn-bg);
@@ -656,6 +887,12 @@ html.theme-dark .luminon-hero-title {
   border-color: var(--luminon-primary);
   color: var(--luminon-primary);
   background: var(--luminon-primary-soft);
+}
+
+.luminon-share-create-btn {
+  color: #ffffff;
+  background: var(--luminon-primary);
+  border-color: var(--luminon-primary);
 }
 
 .luminon-grid-wrap {
@@ -957,6 +1194,15 @@ html.theme-dark .nivo-tooltip {
 }
 
 @media (max-width: 1180px) {
+  .luminon-group-select {
+    display: block;
+  }
+
+  .luminon-group-chip,
+  .luminon-group-more-wrap {
+    display: none;
+  }
+
   .luminon-shell {
     padding: 0;
   }
@@ -1152,6 +1398,10 @@ html.theme-dark .nivo-tooltip {
   .luminon-title-btn {
     width: 100%;
     justify-content: center;
+  }
+
+  .luminon-share-create {
+    grid-template-columns: 1fr;
   }
 
   .luminon-chart-btn {

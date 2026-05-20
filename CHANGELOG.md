@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.9.0 - 2026-05-20
+
+- Added dual runtime flow for local and remote MCP operation without breaking stdio usage:
+  - `luminon mcp` for local stdio (AI client managed).
+  - `luminon start` keeps launching the local renderer.
+  - `luminon start remote` launches the HTTP MCP server.
+- Added CLI token lifecycle for remote MCP bearer auth (`token create/list/delete/current`) with encrypted-at-rest storage in local user data.
+- Added remote MCP auth enforcement and operational defaults, including startup behavior when no token exists and token fallback when deleting the current token.
+- Added dashboard information architecture primitives and tools for OSS/commercial parity:
+  - multi-page dashboards (create/list/import/copy/move flows),
+  - dashboard groups,
+  - dashboard folders.
+- Added natural-language coverage in dashboard NL flows for pages/groups/folders operations to keep tool behavior consistent across OSS and commercial runtimes.
+- Added secure renderer sharing via share links:
+  - create/list/revoke links,
+  - optional passcode protection,
+  - passcode rotation/removal,
+  - basic shared endpoint rate limiting.
+- Added renderer sidebar group navigation with scalable behavior for many groups:
+  - top pinned groups,
+  - overflow `More` menu with group search,
+  - mobile selector,
+  - persisted selected group filter.
+- Improved shared-link UX and security behavior:
+  - `/shared/:token` validates passcode then redirects to the visual dashboard route,
+  - passcode is no longer exposed in redirected URL (session storage bridge),
+  - automatic fallback to passcode prompt when session context is missing.
+- Updated dashboard header actions to prioritize secure sharing:
+  - removed `Private/Published` toggle and `Copy public URL` from primary OSS UI,
+  - kept backend compatibility for legacy `published` semantics.
+- Expanded renderer and integration tests around sharing/passcode/revoke/rate-limit flows and fixed flaky sequencing that previously produced `429` in passcode lifecycle tests.
+
 ## 0.2.0 - 2026-05-11
 
 - Added `organizationId` to the shared request context so the remote MCP runtime can carry commercial workspace metadata.

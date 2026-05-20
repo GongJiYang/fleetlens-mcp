@@ -56,9 +56,10 @@ npm run dev:stack
 
 Current local endpoints:
 
-- Renderer UI: `http://localhost:5173`
-- Renderer API: `http://localhost:4010`
-- MCP transport: stdio only
+- Renderer UI + API: `http://localhost:5173`
+- Remote MCP HTTP (optional): `http://localhost:3001/mcp`
+- Remote MCP health: `http://localhost:3001/health`
+- Local MCP transport: stdio (`luminon mcp`)
 
 ## CLI Usage
 
@@ -68,25 +69,35 @@ Main commands:
 
 ```bash
 luminon mcp
-luminon start renderer
+luminon start
+luminon start remote
+luminon start stack
 luminon stop renderer
-luminon stop mcp
+luminon stop remote
 luminon status
+luminon token create <name>
+luminon token list
+luminon token current
+luminon token set-default <id|name>
+luminon token delete <id|name>
 ```
 
 Recommended split:
 
 - Run `luminon mcp` inside the AI tool as the stdio MCP process
-- Run `luminon start renderer` separately when you want the browser preview
+- Run `luminon start` separately when you want the browser preview
+- Run `luminon start remote` when you need HTTP MCP for remote/LAN clients
+- Use `luminon token ...` commands to manage remote bearer tokens (encrypted at rest in the local data dir)
 
 Direct package usage:
 
 ```bash
 npx -y @luminondev/mcp-dashboard mcp --mode lite
-npx -y @luminondev/mcp-dashboard start renderer
+npx -y @luminondev/mcp-dashboard start
+npx -y @luminondev/mcp-dashboard start remote
 ```
 
-`start stack` is intentionally discouraged in the CLI because MCP over stdio should be owned by the host AI client.
+`start stack` starts renderer + remote MCP. Stdio MCP still should be owned by the host AI client.
 
 ## Tool Modes
 
@@ -179,6 +190,8 @@ The active store contains these files:
 - `dashboard_versions.json`
 - `dataset_snapshots.json`
 - `deleted_dashboards.json`
+- `tokens.secure.json`
+- `share_links.json`
 
 ## Seed Behavior
 
@@ -252,8 +265,15 @@ Current routes:
 - `GET /api/dashboards/:id`
 - `PATCH /api/dashboards/:id`
 - `DELETE /api/dashboards/:id/filters/:filterId`
+- `GET /api/dashboard-groups`
 - `GET /api/datasets`
 - `PATCH /api/datasets/:id`
+- `GET /api/dashboards/:id/share-links`
+- `POST /api/dashboards/:id/share-links`
+- `POST /api/share-links/:id/passcode`
+- `POST /api/share-links/:id/revoke`
+- `GET /api/shared/:token`
+- `GET /shared/:token`
 - `GET /api/events`
 
 Notes:
@@ -261,6 +281,7 @@ Notes:
 - `GET /api/dashboards/:id` returns only published dashboards
 - `GET /api/dashboards` returns the local dashboard list used by the main UI
 - `GET /api/events` is an SSE endpoint used for live refreshes
+- `/shared/:token` is a passcode-aware shared access entrypoint that redirects to the visual dashboard route
 
 ### Example: refresh a demo dataset without MCP (no AI tokens)
 
@@ -324,6 +345,20 @@ These are the MCP tools exposed by `packages/mcp-server/src/index.ts` today.
 - `restore_deleted_dashboard`
 - `list_dashboard_filters`
 - `update_dashboard_filters`
+- `list_dashboard_pages`
+- `create_dashboard_page`
+- `rename_dashboard_page`
+- `delete_dashboard_page`
+- `move_chart_to_page`
+- `copy_dashboard_page`
+- `import_dashboard_pages`
+- `create_dashboard_folder`
+- `list_dashboard_folders`
+- `move_dashboard_to_folder`
+- `create_dashboard_group`
+- `list_dashboard_groups`
+- `add_dashboard_group_item`
+- `remove_dashboard_group_item`
 
 ### Dataset tools
 
@@ -394,11 +429,24 @@ In `ultra-lite` mode, the exposed toolset is reduced further to:
 - creating a dashboard from a template
 - registering a dataset from CSV
 - renaming a dashboard
+- creating, listing, and importing dashboard pages
+- creating/listing folders and moving dashboards between folders
+- creating/listing groups and adding/removing dashboards in groups
 - changing dashboard columns or auto-layout
 - applying dashboard theme and presentation changes
 - creating `bar`, `line`, `area`, `scatter`, `radar`, `donut`, `funnel`, `kpi_card`, `table`, `combo`, and grouped/stacked multi-bar charts
 
 It accepts both English and Spanish-style requests through lightweight intent matching. The response payload is intentionally summarized to keep MCP usage lower in constrained clients.
+
+## Sharing UX Notes (Current OSS UI)
+
+- The primary dashboard sharing action is now `Share` in the renderer header.
+- `Private/Published` is kept as backend compatibility metadata, but no longer appears as a primary UI action in OSS.
+- Secure share links can be created with or without passcode.
+- For passcode-protected links:
+  - `/shared/:token` asks for passcode,
+  - after validation, it redirects to the visual dashboard route,
+  - passcode is stored in browser session storage for that session (not in URL query on redirect).
 
 ## Dashboard Operations
 

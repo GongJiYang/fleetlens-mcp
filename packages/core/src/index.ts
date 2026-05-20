@@ -6,6 +6,9 @@ import type {
   CreateDashboardInput,
   CreateSnapshotInput,
   Dashboard,
+  DashboardFolder,
+  DashboardGroup,
+  DashboardPage,
   DashboardFilter,
   DashboardNlInput,
   DashboardSnapshot,
@@ -15,8 +18,13 @@ import type {
   DeleteDashboardInput,
   DescribeDatasetInput,
   ListDashboardFiltersInput,
+  ListDashboardFoldersInput,
+  ListDashboardGroupsInput,
+  ListDashboardPagesInput,
   ListDashboardVersionsInput,
   ListDashboardsInput,
+  MoveDashboardToFolderInput,
+  RemoveDashboardGroupItemInput,
   ListDatasetContentInput,
   RegisterDatasetInput,
   ResetChartPresentationInput,
@@ -29,12 +37,23 @@ import type {
   ThemePreset,
   UndoDashboardInput,
   UpdateDashboardFiltersInput,
-  UpdateDashboardInput
+  UpdateDashboardPageInput,
+  UpdateDashboardInput,
+  AddDashboardGroupItemInput,
+  CreateDashboardFolderInput,
+  CreateDashboardGroupInput,
+  CreateDashboardPageInput,
+  CopyDashboardPageInput,
+  DeleteDashboardPageInput,
+  ImportDashboardPagesInput,
+  MoveChartToPageInput
 } from "../../shared/dist/index.js";
 
 export type DataPaths = {
   baseDir: string;
   dashboards: string;
+  dashboardFolders?: string;
+  dashboardGroups?: string;
   datasets: string;
   snapshots: string;
   datasetSnapshots: string;
@@ -154,6 +173,20 @@ export interface WorkspaceDataBackend {
   updateDataset(input: UpdateDatasetInput, context?: RequestContext): Promise<Dataset>;
   setDashboardPublishState(input: SetDashboardPublishStateInput, context?: RequestContext): Promise<Dashboard>;
   removeDashboardFilter(input: RemoveDashboardFilterInput, context?: RequestContext): Promise<Dashboard>;
+  createDashboardPage(input: CreateDashboardPageInput, context?: RequestContext): Promise<Dashboard>;
+  updateDashboardPage(input: UpdateDashboardPageInput, context?: RequestContext): Promise<Dashboard>;
+  deleteDashboardPage(input: DeleteDashboardPageInput, context?: RequestContext): Promise<Dashboard>;
+  listDashboardPages(input: ListDashboardPagesInput, context?: RequestContext): Promise<DashboardPage[]>;
+  moveChartToPage(input: MoveChartToPageInput, context?: RequestContext): Promise<Dashboard>;
+  copyDashboardPage(input: CopyDashboardPageInput, context?: RequestContext): Promise<Dashboard>;
+  importDashboardPages(input: ImportDashboardPagesInput, context?: RequestContext): Promise<Dashboard>;
+  createDashboardFolder(input: CreateDashboardFolderInput, context?: RequestContext): Promise<DashboardFolder>;
+  listDashboardFolders(input?: ListDashboardFoldersInput, context?: RequestContext): Promise<DashboardFolder[]>;
+  createDashboardGroup(input: CreateDashboardGroupInput, context?: RequestContext): Promise<DashboardGroup>;
+  listDashboardGroups(input?: ListDashboardGroupsInput, context?: RequestContext): Promise<DashboardGroup[]>;
+  addDashboardGroupItem(input: AddDashboardGroupItemInput, context?: RequestContext): Promise<DashboardGroup>;
+  removeDashboardGroupItem(input: RemoveDashboardGroupItemInput, context?: RequestContext): Promise<DashboardGroup>;
+  moveDashboardToFolder(input: MoveDashboardToFolderInput, context?: RequestContext): Promise<Dashboard>;
 }
 
 export interface LocalWorkspaceStorage extends WorkspaceDataBackend {}

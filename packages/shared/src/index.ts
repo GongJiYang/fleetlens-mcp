@@ -344,6 +344,19 @@ export const dashboardFilterSchema = z.object({
   applyTo: z.array(z.string().min(1)).optional()
 });
 
+export const dashboardPageSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  slug: z.string().min(1),
+  pageOrder: z.number().int().min(0).default(0),
+  subtitle: z.string().max(240).optional(),
+  themePreset: themePresetSchema.optional(),
+  presentation: chartPresentationSchema.optional(),
+  charts: z.array(chartSchema).default([]),
+  layout: layoutSchema,
+  filters: z.array(dashboardFilterSchema).default([])
+});
+
 export const dashboardVisibilitySchema = z.enum(["private", "workspace", "public"]);
 
 const ownershipMetadataSchema = z.object({
@@ -361,6 +374,9 @@ export const dashboardSchema = z
     charts: z.array(chartSchema),
     layout: layoutSchema,
     filters: z.array(dashboardFilterSchema).default([]),
+    pages: z.array(dashboardPageSchema).default([]),
+    folderId: z.string().min(1).optional(),
+    sortOrder: z.number().int().min(0).default(0),
     published: z.boolean().default(false),
     visibility: dashboardVisibilitySchema.optional(),
     workspaceId: ownershipMetadataSchema.shape.workspaceId,
@@ -382,6 +398,9 @@ export const createDashboardInputSchema = z.object({
   charts: z.array(chartSchema).default([]),
   layout: layoutSchema.default(defaultLayout),
   filters: z.array(dashboardFilterSchema).default([]),
+  pages: z.array(dashboardPageSchema).optional(),
+  folderId: z.string().min(1).optional(),
+  sortOrder: z.number().int().min(0).optional(),
   published: z.boolean().default(false),
   visibility: dashboardVisibilitySchema.optional(),
   workspaceId: z.string().min(1).optional(),
@@ -682,6 +701,137 @@ export const listDashboardsInputSchema = z.object({
   status: z.enum(["active", "deleted", "all"]).default("active")
 });
 
+export const dashboardFolderSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  slug: z.string().min(1),
+  workspaceId: z.string().min(1).default("local"),
+  createdBy: z.string().min(1).default("local"),
+  parentFolderId: z.string().min(1).nullable().optional(),
+  sortOrder: z.number().int().min(0).default(0),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime()
+});
+
+export const dashboardGroupItemSchema = z.object({
+  dashboardId: z.string().min(1),
+  sortOrder: z.number().int().min(0).default(0)
+});
+
+export const dashboardGroupSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  slug: z.string().min(1),
+  description: z.string().optional(),
+  workspaceId: z.string().min(1).default("local"),
+  createdBy: z.string().min(1).default("local"),
+  sortOrder: z.number().int().min(0).default(0),
+  items: z.array(dashboardGroupItemSchema).default([]),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime()
+});
+
+export const createDashboardPageInputSchema = z.object({
+  dashboardId: z.string().min(1),
+  id: z.string().min(1).optional(),
+  name: z.string().min(1),
+  slug: z.string().min(1).optional(),
+  pageOrder: z.number().int().min(0).optional(),
+  subtitle: z.string().max(240).optional(),
+  themePreset: themePresetSchema.optional(),
+  presentation: chartPresentationSchema.optional(),
+  charts: z.array(chartSchema).optional(),
+  layout: layoutSchema.optional(),
+  filters: z.array(dashboardFilterSchema).optional()
+});
+
+export const updateDashboardPageInputSchema = z.object({
+  dashboardId: z.string().min(1),
+  pageId: z.string().min(1),
+  name: z.string().min(1).optional(),
+  slug: z.string().min(1).optional(),
+  pageOrder: z.number().int().min(0).optional()
+});
+
+export const deleteDashboardPageInputSchema = z.object({
+  dashboardId: z.string().min(1),
+  pageId: z.string().min(1),
+  confirm: z.string().optional()
+});
+
+export const listDashboardPagesInputSchema = z.object({
+  dashboardId: z.string().min(1)
+});
+
+export const moveChartToPageInputSchema = z.object({
+  sourceDashboardId: z.string().min(1),
+  targetDashboardId: z.string().min(1),
+  chartId: z.string().min(1),
+  sourcePageId: z.string().min(1).optional(),
+  targetPageId: z.string().min(1).optional(),
+  targetPageName: z.string().min(1).optional(),
+  targetPageSlug: z.string().min(1).optional()
+});
+
+export const copyDashboardPageInputSchema = z.object({
+  sourceDashboardId: z.string().min(1),
+  targetDashboardId: z.string().min(1),
+  sourcePageId: z.string().min(1).optional(),
+  targetPageId: z.string().min(1).optional(),
+  targetPageName: z.string().min(1).optional(),
+  targetPageSlug: z.string().min(1).optional()
+});
+
+export const importDashboardPagesInputSchema = z.object({
+  sourceDashboardId: z.string().min(1),
+  targetDashboardId: z.string().min(1),
+  sourcePageIds: z.array(z.string().min(1)).optional()
+});
+
+export const createDashboardFolderInputSchema = z.object({
+  id: z.string().min(1).optional(),
+  name: z.string().min(1),
+  slug: z.string().min(1).optional(),
+  workspaceId: z.string().min(1).optional(),
+  createdBy: z.string().min(1).optional(),
+  parentFolderId: z.string().min(1).nullable().optional(),
+  sortOrder: z.number().int().min(0).optional()
+});
+
+export const listDashboardFoldersInputSchema = z.object({
+  workspaceId: z.string().min(1).optional()
+});
+
+export const createDashboardGroupInputSchema = z.object({
+  id: z.string().min(1).optional(),
+  name: z.string().min(1),
+  slug: z.string().min(1).optional(),
+  description: z.string().optional(),
+  workspaceId: z.string().min(1).optional(),
+  createdBy: z.string().min(1).optional(),
+  sortOrder: z.number().int().min(0).optional()
+});
+
+export const listDashboardGroupsInputSchema = z.object({
+  workspaceId: z.string().min(1).optional()
+});
+
+export const addDashboardGroupItemInputSchema = z.object({
+  groupId: z.string().min(1),
+  dashboardId: z.string().min(1),
+  sortOrder: z.number().int().min(0).optional()
+});
+
+export const removeDashboardGroupItemInputSchema = z.object({
+  groupId: z.string().min(1),
+  dashboardId: z.string().min(1)
+});
+
+export const moveDashboardToFolderInputSchema = z.object({
+  dashboardId: z.string().min(1),
+  folderId: z.string().min(1).nullable()
+});
+
 
 export const fieldFilterSchema = z.object({
   field: z.string().min(1),
@@ -890,6 +1040,7 @@ export type ComboChart = z.infer<typeof comboChartSchema>;
 export type ChartPresentation = z.infer<typeof chartPresentationSchema>;
 export type Layout = z.infer<typeof layoutSchema>;
 export type Dashboard = z.infer<typeof dashboardSchema>;
+export type DashboardPage = z.infer<typeof dashboardPageSchema>;
 export type CreateDashboardInput = z.infer<typeof createDashboardInputSchema>;
 export type AddChartInput = z.infer<typeof addChartInputSchema>;
 export type AddChartToDashboardInput = z.infer<typeof addChartToDashboardInputSchema>;
@@ -990,3 +1141,20 @@ export type ListDashboardVersionsInput = z.infer<typeof listDashboardVersionsInp
 export type UndoDashboardInput = z.infer<typeof undoDashboardInputSchema>;
 export type RestoreDeletedDashboardInput = z.infer<typeof restoreDeletedDashboardInputSchema>;
 export type ListDashboardsInput = z.infer<typeof listDashboardsInputSchema>;
+export type DashboardFolder = z.infer<typeof dashboardFolderSchema>;
+export type DashboardGroup = z.infer<typeof dashboardGroupSchema>;
+export type DashboardGroupItem = z.infer<typeof dashboardGroupItemSchema>;
+export type CreateDashboardPageInput = z.infer<typeof createDashboardPageInputSchema>;
+export type UpdateDashboardPageInput = z.infer<typeof updateDashboardPageInputSchema>;
+export type DeleteDashboardPageInput = z.infer<typeof deleteDashboardPageInputSchema>;
+export type ListDashboardPagesInput = z.infer<typeof listDashboardPagesInputSchema>;
+export type MoveChartToPageInput = z.infer<typeof moveChartToPageInputSchema>;
+export type CopyDashboardPageInput = z.infer<typeof copyDashboardPageInputSchema>;
+export type ImportDashboardPagesInput = z.infer<typeof importDashboardPagesInputSchema>;
+export type CreateDashboardFolderInput = z.infer<typeof createDashboardFolderInputSchema>;
+export type ListDashboardFoldersInput = z.infer<typeof listDashboardFoldersInputSchema>;
+export type CreateDashboardGroupInput = z.infer<typeof createDashboardGroupInputSchema>;
+export type ListDashboardGroupsInput = z.infer<typeof listDashboardGroupsInputSchema>;
+export type AddDashboardGroupItemInput = z.infer<typeof addDashboardGroupItemInputSchema>;
+export type RemoveDashboardGroupItemInput = z.infer<typeof removeDashboardGroupItemInputSchema>;
+export type MoveDashboardToFolderInput = z.infer<typeof moveDashboardToFolderInputSchema>;

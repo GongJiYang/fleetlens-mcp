@@ -8,6 +8,7 @@ import {
   addComboChartFromDatasetInputSchema,
   addChartInputSchema,
   addChartToDashboardInputSchema,
+  chartSchema,
   addDonutChartFromDatasetInputSchema,
   addFunnelChartFromDatasetInputSchema,
   addKpiCardFromDatasetInputSchema,
@@ -62,6 +63,23 @@ import {
   undoDashboardInputSchema,
   restoreDeletedDashboardInputSchema,
   listDashboardsInputSchema,
+  dashboardPageSchema,
+  dashboardFolderSchema,
+  dashboardGroupSchema,
+  createDashboardPageInputSchema,
+  copyDashboardPageInputSchema,
+  importDashboardPagesInputSchema,
+  moveChartToPageInputSchema,
+  updateDashboardPageInputSchema,
+  deleteDashboardPageInputSchema,
+  listDashboardPagesInputSchema,
+  createDashboardFolderInputSchema,
+  listDashboardFoldersInputSchema,
+  createDashboardGroupInputSchema,
+  listDashboardGroupsInputSchema,
+  addDashboardGroupItemInputSchema,
+  removeDashboardGroupItemInputSchema,
+  moveDashboardToFolderInputSchema,
   type AddBarChartFromDatasetInput,
   type AddComboChartFromDatasetInput,
   type AddChartInput,
@@ -78,8 +96,13 @@ import {
   type CreateChartFromDatasetInput,
   type AutoLayoutDashboardInput,
   type Dashboard,
+  type DashboardPage,
+  type DashboardFolder,
+  type DashboardGroup,
   type DashboardNlInput,
   type DeleteDashboardInput,
+  type CopyDashboardPageInput,
+  type ImportDashboardPagesInput,
   type Dataset,
   type Template,
   type DescribeDatasetInput,
@@ -122,7 +145,19 @@ import {
   type RemoveDashboardFilterInput,
   type ListDashboardFiltersInput,
   type ListDashboardsInput,
-  type DashboardFilter
+  type DashboardFilter,
+  type CreateDashboardPageInput,
+  type MoveChartToPageInput,
+  type UpdateDashboardPageInput,
+  type DeleteDashboardPageInput,
+  type ListDashboardPagesInput,
+  type CreateDashboardFolderInput,
+  type ListDashboardFoldersInput,
+  type CreateDashboardGroupInput,
+  type ListDashboardGroupsInput,
+  type AddDashboardGroupItemInput,
+  type RemoveDashboardGroupItemInput,
+  type MoveDashboardToFolderInput
 } from "../../shared/dist/index.js";
 import { localContentRegistry } from "./local-content-registry.js";
 
@@ -133,6 +168,8 @@ const REPO_DATA_DIR = path.resolve(__dirname, "../../../data");
 export type DataPaths = {
   baseDir: string;
   dashboards: string;
+  dashboardFolders: string;
+  dashboardGroups: string;
   datasets: string;
   snapshots: string;
   datasetSnapshots: string;
@@ -171,6 +208,8 @@ const dataPaths: DataPaths = (() => {
   return {
     baseDir,
     dashboards: path.join(baseDir, "dashboards.json"),
+    dashboardFolders: path.join(baseDir, "dashboard_folders.json"),
+    dashboardGroups: path.join(baseDir, "dashboard_groups.json"),
     datasets: path.join(baseDir, "datasets.json"),
     snapshots: path.join(baseDir, "dashboard_versions.json"),
     datasetSnapshots: path.join(baseDir, "dataset_snapshots.json"),
@@ -237,6 +276,8 @@ async function loadRepoSeedDatasets(): Promise<Dataset[]> {
 
 export async function ensureUserDataFiles(): Promise<void> {
   await ensureStore();
+  await ensureFolderStore();
+  await ensureGroupStore();
   await ensureDatasetStore();
   await ensureSnapshotStore();
   await ensureDeletedStore();
@@ -244,6 +285,14 @@ export async function ensureUserDataFiles(): Promise<void> {
 
 type Store = {
   dashboards: Dashboard[];
+};
+
+type FolderStore = {
+  folders: DashboardFolder[];
+};
+
+type GroupStore = {
+  groups: DashboardGroup[];
 };
 
 type DatasetStore = {
@@ -269,6 +318,8 @@ type DeletedDashboardStore = {
 };
 
 const emptyStore: Store = { dashboards: [] };
+const emptyFolderStore: FolderStore = { folders: [] };
+const emptyGroupStore: GroupStore = { groups: [] };
 const emptyDatasetStore: DatasetStore = { datasets: [] };
 const emptySnapshotStore: SnapshotStore = { snapshots: [] };
 const emptyDatasetSnapshotStore: DatasetSnapshotStore = { snapshots: [] };
@@ -363,20 +414,68 @@ function parseWithSchema<T>(schema: { parse(data: unknown): T }, raw: unknown): 
   return schema.parse(normalizeToolInput(raw));
 }
 
+type DashboardPageMeta = DashboardPage & {
+  subtitle?: string;
+  themePreset?: Dashboard["themePreset"];
+  presentation?: Dashboard["presentation"];
+};
+
+function withPageMeta(page: DashboardPage): DashboardPageMeta {
+  return page as DashboardPageMeta;
+}
+
+function hydrateLegacyPageStyleMetadata(dashboards: Dashboard[]): boolean {
+  const dashboardByName = new Map<string, Dashboard>();
+  for (const dashboard of dashboards) {
+    dashboardByName.set(dashboard.name.trim().toLowerCase(), dashboard);
+  }
+
+  let changed = false;
+  for (const dashboard of dashboards) {
+    for (const page of ensureDashboardPages(dashboard)) {
+      const pageMeta = withPageMeta(page);
+      const source = dashboardByName.get(pageMeta.name.trim().toLowerCase());
+      if (!source || source.id === dashboard.id) continue;
+      if (pageMeta.subtitle === undefined && source.subtitle) {
+        pageMeta.subtitle = source.subtitle;
+        changed = true;
+      }
+      if (pageMeta.themePreset === undefined && source.themePreset) {
+        pageMeta.themePreset = source.themePreset;
+        changed = true;
+      }
+      if (pageMeta.presentation === undefined && source.presentation) {
+        pageMeta.presentation = structuredClone(source.presentation);
+        changed = true;
+      }
+    }
+  }
+
+  return changed;
+}
+
 async function ensureStore(): Promise<Store> {
   const parsed = await readJsonFileWithSeed<{ dashboards?: unknown[] }>(
     dataPaths.dashboards,
     "dashboards.json",
     emptyStore
   );
-  const dashboards = (parsed.dashboards ?? []).map((item) => dashboardSchema.parse(item));
+  const dashboards = (parsed.dashboards ?? []).map((item) => {
+    const dashboard = dashboardSchema.parse(item);
+    syncDashboardPrimaryPage(dashboard);
+    return dashboard;
+  });
   const repoSeedDashboards = await loadRepoSeedDashboards();
   const repoSeedDashboardIds = new Set(repoSeedDashboards.map((entry) => entry.id));
   const syncedDashboards = [
-    ...repoSeedDashboards,
+    ...repoSeedDashboards.map((dashboard) => {
+      syncDashboardPrimaryPage(dashboard);
+      return dashboard;
+    }),
     ...dashboards.filter((entry) => !repoSeedDashboardIds.has(entry.id))
   ];
-  const changed = JSON.stringify(syncedDashboards) !== JSON.stringify(dashboards);
+  const legacyStylesHydrated = hydrateLegacyPageStyleMetadata(syncedDashboards);
+  const changed = legacyStylesHydrated || JSON.stringify(syncedDashboards) !== JSON.stringify(dashboards);
 
   const store = { dashboards: syncedDashboards };
   if (changed) {
@@ -388,6 +487,44 @@ async function ensureStore(): Promise<Store> {
 async function saveStore(store: Store): Promise<void> {
   await ensureBaseDir();
   await fs.writeFile(dataPaths.dashboards, JSON.stringify(store, null, 2), "utf8");
+}
+
+async function ensureFolderStore(): Promise<FolderStore> {
+  if (cachedFolderStore) return cachedFolderStore;
+  const parsed = await readJsonFileWithSeed<{ folders?: unknown[] }>(
+    dataPaths.dashboardFolders,
+    "dashboard_folders.json",
+    emptyFolderStore
+  );
+  cachedFolderStore = {
+    folders: (parsed.folders ?? []).map((item) => dashboardFolderSchema.parse(item))
+  };
+  return cachedFolderStore;
+}
+
+async function saveFolderStore(store: FolderStore): Promise<void> {
+  cachedFolderStore = store;
+  await ensureBaseDir();
+  await fs.writeFile(dataPaths.dashboardFolders, JSON.stringify(store, null, 2), "utf8");
+}
+
+async function ensureGroupStore(): Promise<GroupStore> {
+  if (cachedGroupStore) return cachedGroupStore;
+  const parsed = await readJsonFileWithSeed<{ groups?: unknown[] }>(
+    dataPaths.dashboardGroups,
+    "dashboard_groups.json",
+    emptyGroupStore
+  );
+  cachedGroupStore = {
+    groups: (parsed.groups ?? []).map((item) => dashboardGroupSchema.parse(item))
+  };
+  return cachedGroupStore;
+}
+
+async function saveGroupStore(store: GroupStore): Promise<void> {
+  cachedGroupStore = store;
+  await ensureBaseDir();
+  await fs.writeFile(dataPaths.dashboardGroups, JSON.stringify(store, null, 2), "utf8");
 }
 
 async function ensureDatasetStore(): Promise<DatasetStore> {
@@ -423,6 +560,8 @@ let cachedTemplates: Template[] | null = null;
 let cachedSnapshotStore: SnapshotStore | null = null;
 let cachedDatasetSnapshotStore: DatasetSnapshotStore | null = null;
 let cachedDeletedStore: DeletedDashboardStore | null = null;
+let cachedFolderStore: FolderStore | null = null;
+let cachedGroupStore: GroupStore | null = null;
 
 async function ensureTemplates(): Promise<Template[]> {
   if (cachedTemplates) return cachedTemplates;
@@ -918,7 +1057,246 @@ function assertDashboardChartsLimits(charts: Chart[]): void {
   }
 }
 
+function slugify(value: string, fallback = "page"): string {
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return normalized.length > 0 ? normalized : fallback;
+}
+
+function ensureDashboardPages(dashboard: Dashboard): DashboardPage[] {
+  if (Array.isArray(dashboard.pages) && dashboard.pages.length > 0) {
+    return dashboard.pages.map((page, index) =>
+      dashboardPageSchema.parse({
+        ...page,
+        pageOrder: Number.isInteger(page.pageOrder) ? page.pageOrder : index
+      })
+    );
+  }
+
+  return [
+    dashboardPageSchema.parse({
+      id: "page_main",
+      name: "Overview",
+      slug: "overview",
+      pageOrder: 0,
+      charts: dashboard.charts,
+      layout: dashboard.layout,
+      filters: dashboard.filters ?? []
+    })
+  ];
+}
+
+function ensurePageLayout(page: DashboardPage): void {
+  page.layout = layoutSchema.parse(page.layout ?? defaultLayout);
+  page.charts = Array.isArray(page.charts) ? page.charts : [];
+  page.filters = Array.isArray(page.filters) ? page.filters : [];
+}
+
+function validatePageLayoutChartRefs(page: DashboardPage): void {
+  const chartIds = new Set(page.charts.map((chart) => chart.id));
+
+  for (const item of page.layout.items) {
+    if (!chartIds.has(item.chart)) {
+      throw new Error(`Layout reference not found: chart '${item.chart}'.`);
+    }
+    if (item.x + item.w > page.layout.grid.columns) {
+      throw new Error(`Chart '${item.chart}' exceeds grid columns.`);
+    }
+    if (item.y + item.h > page.layout.grid.rows) {
+      throw new Error(`Chart '${item.chart}' exceeds grid rows.`);
+    }
+  }
+}
+
+function autoPlacePageChart(page: DashboardPage, chartId: string): void {
+  ensurePageLayout(page);
+  const cols = page.layout.grid.columns;
+  const chartCount = page.layout.items.length;
+  const chart = page.charts.find((entry) => entry.id === chartId);
+  const w = chart ? preferredChartWidth(chart, cols) : Math.max(1, Math.ceil(cols / 3));
+  const h = 2;
+  const slotsPerRow = Math.max(1, Math.floor(cols / w));
+  const row = Math.floor(chartCount / slotsPerRow);
+  const col = chartCount % slotsPerRow;
+  const x = col * w;
+  const baseY = row * h;
+  const overlapsInColumn = page.layout.items
+    .filter((item) => item.x < x + w && x < item.x + item.w)
+    .reduce((acc, item) => Math.max(acc, item.y + item.h), 0);
+  const y = Math.max(baseY, overlapsInColumn);
+  const requiredRows = y + h;
+
+  if (requiredRows > page.layout.grid.rows) {
+    page.layout.grid.rows = requiredRows;
+  }
+
+  page.layout.items.push({ chart: chartId, x, y, w, h });
+}
+
+function collectDashboardChartIds(dashboard: Dashboard, excludePageId?: string): Set<string> {
+  const ids = new Set<string>();
+  for (const page of ensureDashboardPages(dashboard)) {
+    if (excludePageId && page.id === excludePageId) continue;
+    for (const chart of page.charts) {
+      ids.add(chart.id);
+    }
+  }
+  return ids;
+}
+
+function collectDashboardPageNames(pages: DashboardPage[]): Set<string> {
+  return new Set(pages.map((page) => page.name.toLowerCase()));
+}
+
+function collectDashboardPageSlugs(pages: DashboardPage[]): Set<string> {
+  return new Set(pages.map((page) => page.slug.toLowerCase()));
+}
+
+function uniquePageName(base: string, existingNames: Set<string>): string {
+  const root = stripWrappingQuotes(base).trim() || "Page";
+  let candidate = root;
+  let suffix = 2;
+  while (existingNames.has(candidate.toLowerCase())) {
+    candidate = `${root} (${suffix})`;
+    suffix += 1;
+  }
+  existingNames.add(candidate.toLowerCase());
+  return candidate;
+}
+
+function uniquePageSlug(base: string, existingSlugs: Set<string>): string {
+  const root = slugify(base, "page");
+  let candidate = root;
+  let suffix = 2;
+  while (existingSlugs.has(candidate.toLowerCase())) {
+    candidate = `${root}-${suffix}`;
+    suffix += 1;
+  }
+  existingSlugs.add(candidate.toLowerCase());
+  return candidate;
+}
+
+function generateUniqueChartId(existingIds: Set<string>, prefix = "chart"): string {
+  let next = randomId(prefix);
+  while (existingIds.has(next)) {
+    next = randomId(prefix);
+  }
+  existingIds.add(next);
+  return next;
+}
+
+function normalizePageSelector(raw?: string): string | undefined {
+  const trimmed = raw ? stripWrappingQuotes(raw).trim() : "";
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function findDashboardPageBySelector(pages: DashboardPage[], selector?: string): DashboardPage | undefined {
+  if (!selector) return pages[0];
+  const normalized = normalizePageSelector(selector);
+  if (!normalized) return pages[0];
+  const lower = normalized.toLowerCase();
+  const numericMatch = lower.match(/^(?:page|p[aá]gina)\s+(\d+)$/i) ?? lower.match(/^(\d+)$/);
+  if (numericMatch?.[1]) {
+    const index = Number(numericMatch[1]) - 1;
+    if (Number.isInteger(index) && index >= 0 && index < pages.length) {
+      return pages[index];
+    }
+  }
+
+  return pages.find(
+    (page) =>
+      page.id === normalized ||
+      page.slug.toLowerCase() === lower ||
+      page.name.toLowerCase() === lower ||
+      String(page.pageOrder + 1) === lower
+  );
+}
+
+function findDashboardPageByExactNameOrSlug(pages: DashboardPage[], selector?: string): DashboardPage | undefined {
+  const normalized = normalizePageSelector(selector);
+  if (!normalized) return undefined;
+  const lower = normalized.toLowerCase();
+  return pages.find((page) => page.name.trim().toLowerCase() === lower || page.slug.trim().toLowerCase() === lower);
+}
+
+function isBlankDefaultPage(page: DashboardPage): boolean {
+  return (
+    page.id === "page_main" &&
+    page.name.trim().toLowerCase() === "overview" &&
+    page.charts.length === 0 &&
+    page.layout.items.length === 0 &&
+    page.filters.length === 0
+  );
+}
+
+function findChartOnDashboard(
+  dashboard: Dashboard,
+  chartSelector: string,
+  pageSelector?: string
+): { page: DashboardPage; chart: Chart } | undefined {
+  const pages = ensureDashboardPages(dashboard);
+  const normalized = normalizePageSelector(chartSelector);
+  if (!normalized) return undefined;
+  const lower = normalized.toLowerCase();
+  const pageCandidates = pageSelector ? pages.filter((page) => findDashboardPageBySelector([page], pageSelector)) : pages;
+
+  for (const page of pageCandidates.length > 0 ? pageCandidates : pages) {
+    const exact = page.charts.find(
+      (chart) => chart.id === normalized || (chart.title ?? "").toLowerCase() === lower
+    );
+    if (exact) return { page, chart: exact };
+    const fuzzy = page.charts.find(
+      (chart) => chart.id.toLowerCase().includes(lower) || (chart.title ?? "").toLowerCase().includes(lower)
+    );
+    if (fuzzy) return { page, chart: fuzzy };
+  }
+
+  return undefined;
+}
+
+function clonePageContentWithNewChartIds(
+  page: DashboardPage,
+  existingChartIds: Set<string>
+): { page: DashboardPage; chartIdMap: Map<string, string> } {
+  const chartIdMap = new Map<string, string>();
+  const clonedCharts = page.charts.map((chart) => {
+    const nextId = generateUniqueChartId(existingChartIds, "chart");
+    chartIdMap.set(chart.id, nextId);
+    return chartSchema.parse({
+      ...structuredClone(chart),
+      id: nextId
+    });
+  });
+  const clonedLayout = layoutSchema.parse({
+    ...structuredClone(page.layout),
+    items: page.layout.items.map((item) => ({
+      ...item,
+      chart: chartIdMap.get(item.chart) ?? item.chart
+    }))
+  });
+  const clonedPage = dashboardPageSchema.parse({
+    ...structuredClone(page),
+    charts: clonedCharts,
+    layout: clonedLayout
+  });
+  validatePageLayoutChartRefs(clonedPage);
+  return { page: clonedPage, chartIdMap };
+}
+
+function syncDashboardPrimaryPage(dashboard: Dashboard): void {
+  const pages = ensureDashboardPages(dashboard).sort((a, b) => a.pageOrder - b.pageOrder);
+  const primary = pages[0];
+  dashboard.pages = pages;
+  dashboard.charts = primary.charts;
+  dashboard.layout = primary.layout;
+  dashboard.filters = primary.filters;
+}
+
 function touchDashboard(dashboard: Dashboard): void {
+  syncDashboardPrimaryPage(dashboard);
   dashboard.updatedAt = new Date().toISOString();
 }
 
@@ -956,6 +1334,9 @@ export async function createDashboard(input: unknown): Promise<Dashboard> {
     charts: parsed.charts,
     layout: parsed.layout,
     filters: parsed.filters ?? [],
+    pages: parsed.pages ?? [],
+    folderId: parsed.folderId,
+    sortOrder: parsed.sortOrder ?? 0,
     published: parsed.published ?? false,
     visibility: parsed.visibility ?? (parsed.published ? "public" : "private"),
     workspaceId: parsed.workspaceId ?? "local",
@@ -963,6 +1344,7 @@ export async function createDashboard(input: unknown): Promise<Dashboard> {
     createdAt: now,
     updatedAt: now
   };
+  syncDashboardPrimaryPage(dashboard);
 
   if (store.dashboards.some((d) => d.id === dashboard.id)) {
     throw new Error(`Dashboard '${dashboard.id}' already exists.`);
@@ -3003,6 +3385,74 @@ function stripWrappingQuotes(value: string): string {
   return trimmed;
 }
 
+function stripTrailingSentencePunctuation(value: string): string {
+  return value.trim().replace(/[\s,.;:!?]+$/g, "").trim();
+}
+
+type ImportDashboardClause = {
+  sourceDashboardName: string;
+  targetDashboardName?: string;
+  sourcePageNames?: string[];
+};
+
+function extractImportDashboardClauses(request: string): ImportDashboardClause[] {
+  const normalized = request.replace(/\s+/g, " ").trim();
+  const clauses: ImportDashboardClause[] = [];
+  const importRegex =
+    /import\s+(?:the\s+existing\s+)?(?:dashboard|tablero)\s+["'`]?([^"'`]+?)["'`]?\s+(?:into|to|a|in|en)\s+(.+?)(?=(?:,\s*(?:then\s+)?import\b|\s+then\s+import\b|\s+and\s+import\b|$))/gi;
+
+  for (const match of normalized.matchAll(importRegex)) {
+    const sourceDashboardName = stripTrailingSentencePunctuation(stripWrappingQuotes(match[1] ?? ""));
+    const targetCandidate = stripTrailingSentencePunctuation(stripWrappingQuotes(match[2] ?? ""));
+    if (!sourceDashboardName) continue;
+    clauses.push({
+      sourceDashboardName,
+      targetDashboardName:
+        targetCandidate && !/^(?:the\s+)?same\s+dashboard(?:\s+as\s+the\s+(?:second|next)\s+page)?$/i.test(targetCandidate)
+          ? targetCandidate
+          : undefined
+    });
+  }
+
+  return clauses;
+}
+
+async function executeImportDashboardClause(
+  clause: ImportDashboardClause,
+  fallbackTarget?: Dashboard
+): Promise<Dashboard> {
+  const sourceDashboard = await findDashboardByName(clause.sourceDashboardName);
+  const targetDashboard = clause.targetDashboardName
+    ? await findDashboardByName(clause.targetDashboardName)
+    : fallbackTarget ?? sourceDashboard;
+
+  if (!sourceDashboard) {
+    throw new Error(`Could not resolve source dashboard '${clause.sourceDashboardName}' for import.`);
+  }
+  if (!targetDashboard) {
+    throw new Error(
+      clause.targetDashboardName
+        ? `Could not resolve target dashboard '${clause.targetDashboardName}' for import.`
+        : "Could not resolve target dashboard for import."
+    );
+  }
+
+  const sourcePageIds =
+    clause.sourcePageNames && clause.sourcePageNames.length > 0
+      ? clause.sourcePageNames
+          .map((pageName) =>
+            findDashboardPageBySelector(ensureDashboardPages(sourceDashboard), stripWrappingQuotes(pageName))?.id
+          )
+          .filter((pageId): pageId is string => Boolean(pageId))
+      : undefined;
+
+  return importDashboardPages({
+    sourceDashboardId: sourceDashboard.id,
+    targetDashboardId: targetDashboard.id,
+    sourcePageIds
+  });
+}
+
 function inferNumericColumns(dataset: Dataset, sampleLimit = 50): string[] {
   return dataset.columns.filter((column) => {
     let seen = 0;
@@ -3131,6 +3581,294 @@ export async function dashboardNl(input: unknown): Promise<{
       action: "list_available_dashboards",
       message: "Available dashboards.",
       result: dashboards
+    };
+  }
+
+  if (/(listar|muestra|show|list).*(folder|carpeta)/.test(request)) {
+    const folders = await listDashboardFolders({});
+    return {
+      action: "list_dashboard_folders",
+      message: "Dashboard folders listed.",
+      result: folders
+    };
+  }
+
+  if (/(crear|create).*(folder|carpeta)/.test(request)) {
+    const nameMatch =
+      parsed.request.match(/(?:folder|carpeta)\s+["'`]?([^"'`]+)["'`]?$/i) ??
+      parsed.request.match(/(?:llamad[oa]|named)\s+["'`]?([^"'`]+)["'`]?$/i);
+    const folderName = stripWrappingQuotes(nameMatch?.[1] ?? "").trim();
+    if (!folderName) {
+      throw new Error("Could not infer folder name. Example: 'create folder Finanzas'.");
+    }
+    const folder = await createDashboardFolder({
+      name: folderName,
+      workspaceId: parsed.workspaceId,
+      createdBy: parsed.createdBy
+    });
+    return {
+      action: "create_dashboard_folder",
+      message: `Folder '${folder.name}' created.`,
+      result: folder
+    };
+  }
+
+  if (/(mover|move).*(dashboard|tablero).*(folder|carpeta)/.test(request)) {
+    const dashboardCandidate =
+      parsed.dashboardName ??
+      extractDashboardNameFromRequest(parsed.request) ??
+      parsed.request.match(/(?:dashboard|tablero)\s+["'`]?([^"'`]+?)["'`]?\s+(?:to|a)\s+(?:folder|carpeta)/i)?.[1];
+    const folderCandidate =
+      parsed.request.match(/(?:folder|carpeta)\s+["'`]?([^"'`]+)["'`]?$/i)?.[1] ??
+      parsed.request.match(/(?:to|a)\s+["'`]?([^"'`]+)["'`]?$/i)?.[1];
+    const dashboardName = dashboardCandidate ? stripWrappingQuotes(dashboardCandidate).trim() : "";
+    const folderName = folderCandidate ? stripWrappingQuotes(folderCandidate).trim() : "";
+    const dashboard = dashboardName ? await findDashboardByName(dashboardName) : undefined;
+    if (!dashboard) {
+      throw new Error("Could not resolve dashboard to move. Provide dashboard name or id.");
+    }
+    const folders = await listDashboardFolders({});
+    const folder = folders.find(
+      (entry) => entry.id === folderName || entry.slug === folderName.toLowerCase() || entry.name.toLowerCase() === folderName.toLowerCase()
+    );
+    if (!folder) {
+      throw new Error("Could not resolve target folder. Use list folders or create folder first.");
+    }
+    const moved = await moveDashboardToFolder({ dashboardId: dashboard.id, folderId: folder.id });
+    return {
+      action: "move_dashboard_to_folder",
+      message: `Dashboard '${dashboard.name}' moved to folder '${folder.name}'.`,
+      result: moved
+    };
+  }
+
+  if (/(listar|muestra|show|list).*(group|grupo)/.test(request)) {
+    const groups = await listDashboardGroups({});
+    return {
+      action: "list_dashboard_groups",
+      message: "Dashboard groups listed.",
+      result: groups
+    };
+  }
+
+  if (/(crear|create).*(group|grupo)/.test(request)) {
+    const nameMatch =
+      parsed.request.match(/(?:group|grupo)\s+["'`]?([^"'`]+)["'`]?$/i) ??
+      parsed.request.match(/(?:llamad[oa]|named)\s+["'`]?([^"'`]+)["'`]?$/i);
+    const groupName = stripWrappingQuotes(nameMatch?.[1] ?? "").trim();
+    if (!groupName) {
+      throw new Error("Could not infer group name. Example: 'create group weekly review'.");
+    }
+    const group = await createDashboardGroup({
+      name: groupName,
+      workspaceId: parsed.workspaceId,
+      createdBy: parsed.createdBy
+    });
+    return {
+      action: "create_dashboard_group",
+      message: `Group '${group.name}' created.`,
+      result: group
+    };
+  }
+
+  if (/(agrega|agregar|add).*(dashboard|tablero).*(group|grupo)/.test(request)) {
+    const dashboardCandidate =
+      parsed.dashboardName ??
+      extractDashboardNameFromRequest(parsed.request) ??
+      parsed.request.match(/(?:dashboard|tablero)\s+["'`]?([^"'`]+?)["'`]?\s+(?:to|a)\s+(?:group|grupo)/i)?.[1];
+    const groupCandidate =
+      parsed.request.match(/(?:group|grupo)\s+["'`]?([^"'`]+)["'`]?$/i)?.[1] ??
+      parsed.request.match(/(?:to|a)\s+["'`]?([^"'`]+)["'`]?$/i)?.[1];
+    const dashboardName = dashboardCandidate ? stripWrappingQuotes(dashboardCandidate).trim() : "";
+    const groupName = groupCandidate ? stripWrappingQuotes(groupCandidate).trim() : "";
+    const dashboard = dashboardName ? await findDashboardByName(dashboardName) : undefined;
+    if (!dashboard) {
+      throw new Error("Could not resolve dashboard to add. Provide dashboard name or id.");
+    }
+    const groups = await listDashboardGroups({});
+    const group = groups.find(
+      (entry) => entry.id === groupName || entry.slug === groupName.toLowerCase() || entry.name.toLowerCase() === groupName.toLowerCase()
+    );
+    if (!group) {
+      throw new Error("Could not resolve target group. Use list groups or create group first.");
+    }
+    const updated = await addDashboardGroupItem({ groupId: group.id, dashboardId: dashboard.id });
+    return {
+      action: "add_dashboard_group_item",
+      message: `Dashboard '${dashboard.name}' added to group '${group.name}'.`,
+      result: updated
+    };
+  }
+
+  if (/(crear|create).*(p[aá]gina|page)/.test(request)) {
+    const dashboardCandidate =
+      parsed.dashboardName ??
+      extractDashboardNameFromRequest(parsed.request) ??
+      parsed.request.match(/(?:en|in)\s+(?:dashboard|tablero)\s+["'`]?([^"'`]+)["'`]?/i)?.[1];
+    const pageNameCandidate =
+      parsed.request.match(/(?:p[aá]gina|page)\s+["'`]?([^"'`]+?)["'`]?\s*(?:en|in|$)/i)?.[1] ??
+      parsed.request.match(/(?:llamad[oa]|named)\s+["'`]?([^"'`]+)["'`]?$/i)?.[1];
+    const pageName = stripWrappingQuotes(pageNameCandidate ?? "").trim();
+    if (!pageName) {
+      throw new Error("Could not infer page name. Example: 'create page Resumen in dashboard Ventas'.");
+    }
+    let dashboardId = parsed.dashboardId;
+    if (!dashboardId && dashboardCandidate) {
+      const found = await findDashboardByName(stripWrappingQuotes(dashboardCandidate));
+      dashboardId = found?.id;
+    }
+    const activeDashboardId = dashboardId ?? (await resolveDefaultDashboard(undefined));
+    const updated = await createDashboardPage({
+      dashboardId: activeDashboardId,
+      name: pageName
+    });
+    return {
+      action: "create_dashboard_page",
+      message: `Page '${pageName}' created.`,
+      result: updated
+    };
+  }
+
+  if (/(listar|muestra|show|list).*(p[aá]gina|page)/.test(request)) {
+    let dashboardId = parsed.dashboardId;
+    const dashboardCandidate = parsed.dashboardName ?? extractDashboardNameFromRequest(parsed.request);
+    if (!dashboardId && dashboardCandidate) {
+      const found = await findDashboardByName(stripWrappingQuotes(dashboardCandidate));
+      dashboardId = found?.id;
+    }
+    const activeDashboardId = dashboardId ?? (await resolveDefaultDashboard(undefined));
+    const pages = await listDashboardPages({ dashboardId: activeDashboardId });
+    return {
+      action: "list_dashboard_pages",
+      message: "Dashboard pages listed.",
+      result: pages
+    };
+  }
+
+  if (/(mover|move|mueve).*(chart|gr[aá]fica)/.test(request) && /(?:p[aá]gina|page)/.test(request)) {
+    const sourceDashboardCandidate =
+      parsed.request.match(/(?:from|de)\s+(?:dashboard|tablero)\s+["'`]?([^"'`]+?)["'`]?(?:\s|$)/i)?.[1] ??
+      parsed.dashboardName ??
+      extractDashboardNameFromRequest(parsed.request);
+    const targetDashboardCandidate =
+      parsed.request.match(/(?:to|a|in|en)\s+(?:dashboard|tablero)\s+["'`]?([^"'`]+?)["'`]?(?:\s|$)/i)?.[1] ??
+      sourceDashboardCandidate;
+    const sourcePageCandidate =
+      parsed.request.match(/(?:from|de)\s+(?:page|p[aá]gina)\s+["'`]?([^"'`]+?)["'`]?(?:\s|$)/i)?.[1];
+    const chartCandidate =
+      parsed.request.match(/(?:chart|gr[aá]fica)\s+["'`]?([^"'`]+?)["'`]?\s+(?:to|a|in|en)\s+(?:page|p[aá]gina)/i)?.[1] ??
+      parsed.request.match(/(?:chart|gr[aá]fica)\s+["'`]?([^"'`]+)["'`]?/i)?.[1];
+    const targetPageCandidate =
+      parsed.request.match(/(?:page|p[aá]gina)\s+["'`]?([^"'`]+?)["'`]?\s+(?:of|de|in|en)\s+(?:dashboard|tablero)/i)?.[1] ??
+      parsed.request.match(/(?:page|p[aá]gina)\s+["'`]?([^"'`]+)["'`]?$/i)?.[1];
+    const normalizedChart = stripWrappingQuotes(chartCandidate ?? "").trim();
+    if (!normalizedChart) {
+      throw new Error("Could not infer the chart to move. Example: 'move chart Sales to page 2'.");
+    }
+    const sourceDashboard = sourceDashboardCandidate ? await findDashboardByName(stripWrappingQuotes(sourceDashboardCandidate)) : undefined;
+    const targetDashboard = targetDashboardCandidate ? await findDashboardByName(stripWrappingQuotes(targetDashboardCandidate)) : sourceDashboard;
+    if (!sourceDashboard) {
+      throw new Error("Could not resolve source dashboard for chart move.");
+    }
+    if (!targetDashboard) {
+      throw new Error("Could not resolve target dashboard for chart move.");
+    }
+    const chartLocation = findChartOnDashboard(sourceDashboard, normalizedChart, sourcePageCandidate?.trim());
+    if (!chartLocation) {
+      throw new Error("Could not resolve chart for move. Use the exact chart id or title.");
+    }
+    const pageHint = targetPageCandidate ? stripWrappingQuotes(targetPageCandidate).trim() : undefined;
+    const normalizedTargetPage =
+      pageHint && /^\d+$/.test(pageHint) ? `Page ${pageHint}` : pageHint;
+    const resolvedTargetPage = normalizedTargetPage
+      ? findDashboardPageBySelector(ensureDashboardPages(targetDashboard), normalizedTargetPage)
+      : undefined;
+    const moved = await moveChartToPage({
+      sourceDashboardId: sourceDashboard.id,
+      targetDashboardId: targetDashboard.id,
+      chartId: chartLocation.chart.id,
+      sourcePageId: chartLocation.page.id,
+      targetPageId: resolvedTargetPage?.id,
+      targetPageName: resolvedTargetPage ? undefined : normalizedTargetPage
+    });
+    return {
+      action: "move_chart_to_page",
+      message: `Chart '${chartLocation.chart.id}' moved to page.`,
+      result: moved
+    };
+  }
+
+  if (/(copi|clone|duplicate).*(dashboard|tablero|page|p[aá]gina)/.test(request)) {
+    const sourceDashboardCandidate =
+      parsed.request.match(/(?:from|de)\s+(?:dashboard|tablero)\s+["'`]?([^"'`]+?)["'`]?(?:\s|$)/i)?.[1] ??
+      parsed.dashboardName ??
+      extractDashboardNameFromRequest(parsed.request);
+    const targetDashboardCandidate =
+      parsed.request.match(/(?:to|a|in|en)\s+(?:dashboard|tablero)\s+["'`]?([^"'`]+?)["'`]?(?:\s|$)/i)?.[1] ??
+      sourceDashboardCandidate;
+    const sourcePageCandidate =
+      parsed.request.match(/(?:from|de)\s+(?:page|p[aá]gina)\s+["'`]?([^"'`]+?)["'`]?(?:\s|$)/i)?.[1];
+    const targetPageCandidate =
+      parsed.request.match(/(?:to|a|in|en)\s+(?:page|p[aá]gina)\s+["'`]?([^"'`]+?)["'`]?(?:\s|$)/i)?.[1];
+    const sourceDashboard = sourceDashboardCandidate ? await findDashboardByName(stripWrappingQuotes(sourceDashboardCandidate)) : undefined;
+    const targetDashboard = targetDashboardCandidate ? await findDashboardByName(stripWrappingQuotes(targetDashboardCandidate)) : sourceDashboard;
+    if (!sourceDashboard) {
+      throw new Error("Could not resolve source dashboard for copy.");
+    }
+    if (!targetDashboard) {
+      throw new Error("Could not resolve target dashboard for copy.");
+    }
+    const sourcePage = sourcePageCandidate
+      ? findDashboardPageBySelector(ensureDashboardPages(sourceDashboard), stripWrappingQuotes(sourcePageCandidate))
+      : undefined;
+    const pageHint = targetPageCandidate ? stripWrappingQuotes(targetPageCandidate).trim() : undefined;
+    const normalizedTargetPage =
+      pageHint && /^\d+$/.test(pageHint) ? `Page ${pageHint}` : pageHint;
+    const resolvedTargetPage = normalizedTargetPage
+      ? findDashboardPageBySelector(ensureDashboardPages(targetDashboard), normalizedTargetPage)
+      : undefined;
+    const copied = await copyDashboardPage({
+      sourceDashboardId: sourceDashboard.id,
+      targetDashboardId: targetDashboard.id,
+      sourcePageId: sourcePage?.id,
+      targetPageId: resolvedTargetPage?.id,
+      targetPageName: resolvedTargetPage ? undefined : normalizedTargetPage
+    });
+    return {
+      action: "copy_dashboard_page",
+      message: `Dashboard page copied to '${targetDashboard.name}'.`,
+      result: copied
+    };
+  }
+
+  if (/(importa|import|fusiona|merge|combina|combine).*(dashboard|tablero)/.test(request)) {
+    const importClauses = extractImportDashboardClauses(parsed.request);
+
+    const fallbackSourceDashboardCandidate =
+      parsed.request.match(/(?:from|de)\s+(?:dashboard|tablero)\s+["'`]?([^"'`]+?)["'`]?(?:\s|$)/i)?.[1] ??
+      parsed.dashboardName ??
+      extractDashboardNameFromRequest(parsed.request);
+    if (importClauses.length === 0 && fallbackSourceDashboardCandidate) {
+      importClauses.push({
+        sourceDashboardName: fallbackSourceDashboardCandidate,
+        targetDashboardName: parsed.request.match(/(?:to|a|in|en)\s+(?:dashboard|tablero)\s+["'`]?([^"'`]+?)["'`]?(?:\s|$)/i)?.[1]
+      });
+    }
+    if (importClauses.length === 0) {
+      throw new Error("Could not resolve dashboard import request.");
+    }
+
+    let result: Dashboard | undefined;
+    let fallbackTarget: Dashboard | undefined;
+    for (const clause of importClauses) {
+      result = await executeImportDashboardClause(clause, fallbackTarget);
+      fallbackTarget = result;
+    }
+
+    return {
+      action: "import_dashboard_pages",
+      message: `Dashboard import completed.`,
+      result
     };
   }
 
@@ -3692,6 +4430,418 @@ export async function updateDashboardFilters(raw: unknown): Promise<Dashboard> {
   await saveStore(store);
   await snapshotDashboard(updated, "auto-snapshot:update_filters");
   return updated;
+}
+
+export async function createDashboardPage(raw: unknown): Promise<Dashboard> {
+  const input = parseWithSchema(createDashboardPageInputSchema, raw) as CreateDashboardPageInput;
+  const store = await ensureStore();
+  const dashboard = store.dashboards.find((d) => d.id === input.dashboardId);
+  if (!dashboard) throw new Error(`Dashboard not found: ${input.dashboardId}`);
+
+  const pages = ensureDashboardPages(dashboard);
+  const nextOrder = Number.isInteger(input.pageOrder) ? input.pageOrder! : pages.length;
+  const page: DashboardPage = dashboardPageSchema.parse({
+    id: input.id ?? randomId("page"),
+    name: input.name,
+    slug: input.slug ?? slugify(input.name, `page-${nextOrder + 1}`),
+    pageOrder: nextOrder,
+    subtitle: (input as { subtitle?: string }).subtitle,
+    themePreset: input.themePreset,
+    presentation: input.presentation,
+    charts: input.charts ?? [],
+    layout: input.layout ?? defaultLayout,
+    filters: input.filters ?? []
+  });
+  if (pages.some((entry) => entry.id === page.id || entry.slug === page.slug)) {
+    throw new Error(`Page id/slug already exists in dashboard '${dashboard.id}'.`);
+  }
+  validatePageLayoutChartRefs(page);
+  pages.push(page);
+  dashboard.pages = pages.sort((a, b) => a.pageOrder - b.pageOrder);
+  touchDashboard(dashboard);
+  await saveStore(store);
+  await snapshotDashboard(dashboard, "auto-snapshot:create_page");
+  return dashboard;
+}
+
+export async function updateDashboardPage(raw: unknown): Promise<Dashboard> {
+  const input = parseWithSchema(updateDashboardPageInputSchema, raw) as UpdateDashboardPageInput;
+  const store = await ensureStore();
+  const dashboard = store.dashboards.find((d) => d.id === input.dashboardId);
+  if (!dashboard) throw new Error(`Dashboard not found: ${input.dashboardId}`);
+
+  const pages = ensureDashboardPages(dashboard);
+  const page = pages.find((entry) => entry.id === input.pageId);
+  if (!page) throw new Error(`Page '${input.pageId}' not found in dashboard '${dashboard.id}'.`);
+
+  if (input.name !== undefined) page.name = input.name;
+  if (input.slug !== undefined) page.slug = slugify(input.slug, page.slug);
+  if (input.pageOrder !== undefined) page.pageOrder = input.pageOrder;
+  dashboard.pages = pages.sort((a, b) => a.pageOrder - b.pageOrder);
+  touchDashboard(dashboard);
+  await saveStore(store);
+  await snapshotDashboard(dashboard, "auto-snapshot:update_page");
+  return dashboard;
+}
+
+export async function deleteDashboardPage(raw: unknown): Promise<Dashboard> {
+  const input = parseWithSchema(deleteDashboardPageInputSchema, raw) as DeleteDashboardPageInput;
+  if (input.confirm !== "DELETE") {
+    throw new Error(`Confirmation required to delete page '${input.pageId}'. Retry with confirm: "DELETE".`);
+  }
+  const store = await ensureStore();
+  const dashboard = store.dashboards.find((d) => d.id === input.dashboardId);
+  if (!dashboard) throw new Error(`Dashboard not found: ${input.dashboardId}`);
+  const pages = ensureDashboardPages(dashboard);
+  if (pages.length <= 1) throw new Error("A dashboard must keep at least one page.");
+  const nextPages = pages.filter((entry) => entry.id !== input.pageId);
+  if (nextPages.length === pages.length) {
+    throw new Error(`Page '${input.pageId}' not found in dashboard '${dashboard.id}'.`);
+  }
+  dashboard.pages = nextPages.sort((a, b) => a.pageOrder - b.pageOrder);
+  touchDashboard(dashboard);
+  await saveStore(store);
+  await snapshotDashboard(dashboard, "auto-snapshot:delete_page");
+  return dashboard;
+}
+
+export async function listDashboardPages(raw: unknown): Promise<DashboardPage[]> {
+  const input = parseWithSchema(listDashboardPagesInputSchema, raw) as ListDashboardPagesInput;
+  const store = await ensureStore();
+  const dashboard = store.dashboards.find((d) => d.id === input.dashboardId);
+  if (!dashboard) throw new Error(`Dashboard not found: ${input.dashboardId}`);
+  return ensureDashboardPages(dashboard).sort((a, b) => a.pageOrder - b.pageOrder);
+}
+
+export async function moveChartToPage(raw: unknown): Promise<Dashboard> {
+  const input = parseWithSchema(moveChartToPageInputSchema, raw) as MoveChartToPageInput;
+  const store = await ensureStore();
+  const sourceDashboard = store.dashboards.find((d) => d.id === input.sourceDashboardId);
+  if (!sourceDashboard) throw new Error(`Source dashboard not found: ${input.sourceDashboardId}`);
+  const targetDashboard = store.dashboards.find((d) => d.id === input.targetDashboardId);
+  if (!targetDashboard) throw new Error(`Target dashboard not found: ${input.targetDashboardId}`);
+
+  const sourcePages = ensureDashboardPages(sourceDashboard).sort((a, b) => a.pageOrder - b.pageOrder);
+  const sourcePage = input.sourcePageId
+    ? findDashboardPageBySelector(sourcePages, input.sourcePageId)
+    : sourcePages.find((page) => page.charts.some((chart) => chart.id === input.chartId));
+  if (!sourcePage) {
+    throw new Error(
+      input.sourcePageId
+        ? `Page '${input.sourcePageId}' not found in dashboard '${sourceDashboard.id}'.`
+        : `Could not resolve chart '${input.chartId}' in source dashboard '${sourceDashboard.id}'.`
+    );
+  }
+
+  const sourceChartIndex = sourcePage.charts.findIndex((chart) => chart.id === input.chartId);
+  if (sourceChartIndex === -1) {
+    throw new Error(`Chart '${input.chartId}' not found in page '${sourcePage.id}'.`);
+  }
+
+  const targetPages =
+    sourceDashboard.id === targetDashboard.id
+      ? sourcePages
+      : ensureDashboardPages(targetDashboard).sort((a, b) => a.pageOrder - b.pageOrder);
+  let targetPage =
+    findDashboardPageBySelector(targetPages, input.targetPageId) ||
+    findDashboardPageByExactNameOrSlug(targetPages, input.targetPageName) ||
+    findDashboardPageByExactNameOrSlug(targetPages, input.targetPageSlug) ||
+    findDashboardPageBySelector(targetPages, input.targetPageName) ||
+    findDashboardPageBySelector(targetPages, input.targetPageSlug);
+
+  if (sourceDashboard.id === targetDashboard.id && sourcePage.id === targetPage?.id) {
+    return targetDashboard;
+  }
+
+  if (!targetPage) {
+    targetPage = dashboardPageSchema.parse({
+      id: randomId("page"),
+      name: input.targetPageName ?? `Page ${targetPages.length + 1}`,
+      slug: input.targetPageSlug ?? slugify(input.targetPageName ?? `page-${targetPages.length + 1}`, `page-${targetPages.length + 1}`),
+      pageOrder: targetPages.length,
+      subtitle: sourceDashboard.subtitle ?? withPageMeta(sourcePage).subtitle,
+      charts: [],
+      layout: defaultLayout,
+      filters: []
+    });
+    targetPages.push(targetPage);
+  }
+
+  const chart = sourcePage.charts.splice(sourceChartIndex, 1)[0];
+  sourcePage.layout.items = sourcePage.layout.items.filter((item) => item.chart !== chart.id);
+  ensurePageLayout(sourcePage);
+  validatePageLayoutChartRefs(sourcePage);
+
+  if (!targetPage.charts.some((entry) => entry.id === chart.id)) {
+    targetPage.charts.push(chart);
+  }
+  autoPlacePageChart(targetPage, chart.id);
+  validatePageLayoutChartRefs(targetPage);
+
+  sourceDashboard.pages = sourcePages.sort((a, b) => a.pageOrder - b.pageOrder);
+  targetDashboard.pages = targetPages.sort((a, b) => a.pageOrder - b.pageOrder);
+  touchDashboard(sourceDashboard);
+  if (sourceDashboard.id !== targetDashboard.id) {
+    touchDashboard(targetDashboard);
+  }
+
+  await saveStore(store);
+  await snapshotDashboard(sourceDashboard, "auto-snapshot:move_chart_to_page");
+  if (sourceDashboard.id !== targetDashboard.id) {
+    await snapshotDashboard(targetDashboard, "auto-snapshot:move_chart_to_page");
+  }
+
+  return targetDashboard;
+}
+
+export async function copyDashboardPage(raw: unknown): Promise<Dashboard> {
+  const input = parseWithSchema(copyDashboardPageInputSchema, raw) as CopyDashboardPageInput;
+  const store = await ensureStore();
+  const sourceDashboard = store.dashboards.find((d) => d.id === input.sourceDashboardId);
+  if (!sourceDashboard) throw new Error(`Source dashboard not found: ${input.sourceDashboardId}`);
+  const targetDashboard = store.dashboards.find((d) => d.id === input.targetDashboardId);
+  if (!targetDashboard) throw new Error(`Target dashboard not found: ${input.targetDashboardId}`);
+
+  const sourcePages = ensureDashboardPages(sourceDashboard).sort((a, b) => a.pageOrder - b.pageOrder);
+  const sourcePage = input.sourcePageId ? findDashboardPageBySelector(sourcePages, input.sourcePageId) : sourcePages[0];
+  if (!sourcePage) {
+    throw new Error(
+      input.sourcePageId
+        ? `Page '${input.sourcePageId}' not found in dashboard '${sourceDashboard.id}'.`
+        : `Dashboard '${sourceDashboard.id}' does not have pages to copy.`
+    );
+  }
+
+  const targetPages = ensureDashboardPages(targetDashboard).sort((a, b) => a.pageOrder - b.pageOrder);
+  const existingPage =
+    findDashboardPageBySelector(targetPages, input.targetPageId) ||
+    findDashboardPageByExactNameOrSlug(targetPages, input.targetPageName) ||
+    findDashboardPageByExactNameOrSlug(targetPages, input.targetPageSlug);
+  if (existingPage && sourceDashboard.id === targetDashboard.id && existingPage.id === sourcePage.id) {
+    return targetDashboard;
+  }
+
+  let targetPage =
+    existingPage ??
+    findDashboardPageBySelector(targetPages, input.targetPageName) ??
+    findDashboardPageBySelector(targetPages, input.targetPageSlug);
+  const targetPageName = input.targetPageName ?? sourcePage.name;
+  const targetPageSlug = input.targetPageSlug ?? slugify(targetPageName, `page-${targetPages.length + 1}`);
+  const existingChartIds = collectDashboardChartIds(targetDashboard, targetPage?.id);
+  const { page: clonedPage } = clonePageContentWithNewChartIds(sourcePage, existingChartIds);
+  const reuseBlankDefaultPage = !targetPage && targetPages.length === 1 && isBlankDefaultPage(targetPages[0]);
+  const resolvedTargetPage = targetPage ?? (reuseBlankDefaultPage ? targetPages[0] : undefined);
+
+  if (!resolvedTargetPage) {
+    targetPage = dashboardPageSchema.parse({
+      id: randomId("page"),
+      name: targetPageName,
+      slug: targetPageSlug,
+      pageOrder: targetPages.length,
+      subtitle: sourceDashboard.subtitle ?? withPageMeta(sourcePage).subtitle,
+      themePreset: sourceDashboard.themePreset,
+      presentation: sourceDashboard.presentation,
+      charts: clonedPage.charts,
+      layout: clonedPage.layout,
+      filters: clonedPage.filters
+    });
+    targetPages.push(targetPage);
+  } else {
+    if (input.targetPageName) resolvedTargetPage.name = targetPageName;
+    if (input.targetPageSlug) resolvedTargetPage.slug = targetPageSlug;
+    const resolvedMeta = withPageMeta(resolvedTargetPage);
+    resolvedMeta.subtitle = sourceDashboard.subtitle ?? withPageMeta(sourcePage).subtitle;
+    resolvedMeta.themePreset = sourceDashboard.themePreset;
+    resolvedMeta.presentation = sourceDashboard.presentation;
+    resolvedTargetPage.charts = clonedPage.charts;
+    resolvedTargetPage.layout = clonedPage.layout;
+    resolvedTargetPage.filters = clonedPage.filters;
+  }
+
+  validatePageLayoutChartRefs(resolvedTargetPage ?? targetPages[targetPages.length - 1]);
+  targetDashboard.pages = targetPages.sort((a, b) => a.pageOrder - b.pageOrder);
+  touchDashboard(targetDashboard);
+
+  await saveStore(store);
+  await snapshotDashboard(targetDashboard, "auto-snapshot:copy_dashboard_page");
+  return targetDashboard;
+}
+
+export async function importDashboardPages(raw: unknown): Promise<Dashboard> {
+  const input = parseWithSchema(importDashboardPagesInputSchema, raw) as ImportDashboardPagesInput;
+  const store = await ensureStore();
+  const sourceDashboard = store.dashboards.find((d) => d.id === input.sourceDashboardId);
+  if (!sourceDashboard) throw new Error(`Source dashboard not found: ${input.sourceDashboardId}`);
+  const targetDashboard = store.dashboards.find((d) => d.id === input.targetDashboardId);
+  if (!targetDashboard) throw new Error(`Target dashboard not found: ${input.targetDashboardId}`);
+
+  const sourcePages = ensureDashboardPages(sourceDashboard).sort((a, b) => a.pageOrder - b.pageOrder);
+  const selectedPages =
+    input.sourcePageIds && input.sourcePageIds.length > 0
+      ? input.sourcePageIds
+          .map((pageId) => findDashboardPageBySelector(sourcePages, pageId))
+          .filter((page): page is DashboardPage => Boolean(page))
+      : sourcePages;
+  if (selectedPages.length === 0) {
+    throw new Error(`No pages found to import from dashboard '${sourceDashboard.id}'.`);
+  }
+
+  const targetPages = ensureDashboardPages(targetDashboard).sort((a, b) => a.pageOrder - b.pageOrder);
+  const existingChartIds = collectDashboardChartIds(targetDashboard);
+  const existingNames = collectDashboardPageNames(targetPages);
+  const existingSlugs = collectDashboardPageSlugs(targetPages);
+  const reuseBlankDefaultPage = targetPages.length === 1 && isBlankDefaultPage(targetPages[0]);
+
+  for (const [index, sourcePage] of selectedPages.entries()) {
+    const { page: clonedPage } = clonePageContentWithNewChartIds(sourcePage, existingChartIds);
+    const inferredPageName =
+      selectedPages.length === 1 && sourcePage.name.trim().toLowerCase() === "overview"
+        ? sourceDashboard.name
+        : sourcePage.name;
+    const pageName = uniquePageName(inferredPageName, existingNames);
+    const pageSlug = uniquePageSlug(sourcePage.slug, existingSlugs);
+    if (index === 0 && reuseBlankDefaultPage) {
+      const importedPage = targetPages[0];
+      importedPage.name = pageName;
+      importedPage.slug = pageSlug;
+      const importedMeta = withPageMeta(importedPage);
+      importedMeta.subtitle = sourceDashboard.subtitle ?? withPageMeta(sourcePage).subtitle;
+      importedMeta.themePreset = sourceDashboard.themePreset;
+      importedMeta.presentation = sourceDashboard.presentation;
+      importedPage.charts = clonedPage.charts;
+      importedPage.layout = clonedPage.layout;
+      importedPage.filters = clonedPage.filters;
+    } else {
+      const importedPage = dashboardPageSchema.parse({
+        ...clonedPage,
+        id: randomId("page"),
+        name: pageName,
+        slug: pageSlug,
+        pageOrder: targetPages.length,
+        subtitle: sourceDashboard.subtitle ?? withPageMeta(sourcePage).subtitle,
+        themePreset: sourceDashboard.themePreset,
+        presentation: sourceDashboard.presentation
+      });
+      targetPages.push(importedPage);
+    }
+  }
+
+  targetDashboard.pages = targetPages.sort((a, b) => a.pageOrder - b.pageOrder);
+  touchDashboard(targetDashboard);
+  await saveStore(store);
+  await snapshotDashboard(targetDashboard, "auto-snapshot:import_dashboard_pages");
+  return targetDashboard;
+}
+
+export async function createDashboardFolder(raw: unknown): Promise<DashboardFolder> {
+  const input = parseWithSchema(createDashboardFolderInputSchema, raw) as CreateDashboardFolderInput;
+  const store = await ensureFolderStore();
+  const now = new Date().toISOString();
+  const folder = dashboardFolderSchema.parse({
+    id: input.id ?? randomId("folder"),
+    name: input.name,
+    slug: input.slug ?? slugify(input.name, "folder"),
+    workspaceId: input.workspaceId ?? "local",
+    createdBy: input.createdBy ?? "local",
+    parentFolderId: input.parentFolderId ?? null,
+    sortOrder: input.sortOrder ?? store.folders.length,
+    createdAt: now,
+    updatedAt: now
+  });
+  if (store.folders.some((entry) => entry.id === folder.id || entry.slug === folder.slug)) {
+    throw new Error(`Folder id/slug already exists.`);
+  }
+  store.folders.push(folder);
+  await saveFolderStore(store);
+  return folder;
+}
+
+export async function listDashboardFolders(raw?: unknown): Promise<DashboardFolder[]> {
+  const input = parseWithSchema(listDashboardFoldersInputSchema, raw ?? {}) as ListDashboardFoldersInput;
+  const store = await ensureFolderStore();
+  return store.folders
+    .filter((entry) => !input.workspaceId || entry.workspaceId === input.workspaceId)
+    .sort((a, b) => a.sortOrder - b.sortOrder);
+}
+
+export async function createDashboardGroup(raw: unknown): Promise<DashboardGroup> {
+  const input = parseWithSchema(createDashboardGroupInputSchema, raw) as CreateDashboardGroupInput;
+  const store = await ensureGroupStore();
+  const now = new Date().toISOString();
+  const group = dashboardGroupSchema.parse({
+    id: input.id ?? randomId("group"),
+    name: input.name,
+    slug: input.slug ?? slugify(input.name, "group"),
+    description: input.description,
+    workspaceId: input.workspaceId ?? "local",
+    createdBy: input.createdBy ?? "local",
+    sortOrder: input.sortOrder ?? store.groups.length,
+    items: [],
+    createdAt: now,
+    updatedAt: now
+  });
+  if (store.groups.some((entry) => entry.id === group.id || entry.slug === group.slug)) {
+    throw new Error(`Group id/slug already exists.`);
+  }
+  store.groups.push(group);
+  await saveGroupStore(store);
+  return group;
+}
+
+export async function listDashboardGroups(raw?: unknown): Promise<DashboardGroup[]> {
+  const input = parseWithSchema(listDashboardGroupsInputSchema, raw ?? {}) as ListDashboardGroupsInput;
+  const store = await ensureGroupStore();
+  return store.groups
+    .filter((entry) => !input.workspaceId || entry.workspaceId === input.workspaceId)
+    .sort((a, b) => a.sortOrder - b.sortOrder);
+}
+
+export async function addDashboardGroupItem(raw: unknown): Promise<DashboardGroup> {
+  const input = parseWithSchema(addDashboardGroupItemInputSchema, raw) as AddDashboardGroupItemInput;
+  const groupStore = await ensureGroupStore();
+  const dashboardStore = await ensureStore();
+  if (!dashboardStore.dashboards.some((dashboard) => dashboard.id === input.dashboardId)) {
+    throw new Error(`Dashboard not found: ${input.dashboardId}`);
+  }
+  const group = groupStore.groups.find((entry) => entry.id === input.groupId);
+  if (!group) throw new Error(`Group not found: ${input.groupId}`);
+  group.items = (group.items ?? []).filter((item) => item.dashboardId !== input.dashboardId);
+  group.items.push({
+    dashboardId: input.dashboardId,
+    sortOrder: input.sortOrder ?? group.items.length
+  });
+  group.updatedAt = new Date().toISOString();
+  await saveGroupStore(groupStore);
+  return group;
+}
+
+export async function removeDashboardGroupItem(raw: unknown): Promise<DashboardGroup> {
+  const input = parseWithSchema(removeDashboardGroupItemInputSchema, raw) as RemoveDashboardGroupItemInput;
+  const groupStore = await ensureGroupStore();
+  const group = groupStore.groups.find((entry) => entry.id === input.groupId);
+  if (!group) throw new Error(`Group not found: ${input.groupId}`);
+  group.items = (group.items ?? []).filter((item) => item.dashboardId !== input.dashboardId);
+  group.updatedAt = new Date().toISOString();
+  await saveGroupStore(groupStore);
+  return group;
+}
+
+export async function moveDashboardToFolder(raw: unknown): Promise<Dashboard> {
+  const input = parseWithSchema(moveDashboardToFolderInputSchema, raw) as MoveDashboardToFolderInput;
+  const store = await ensureStore();
+  if (input.folderId) {
+    const folderStore = await ensureFolderStore();
+    if (!folderStore.folders.some((entry) => entry.id === input.folderId)) {
+      throw new Error(`Folder not found: ${input.folderId}`);
+    }
+  }
+  const dashboard = store.dashboards.find((entry) => entry.id === input.dashboardId);
+  if (!dashboard) throw new Error(`Dashboard not found: ${input.dashboardId}`);
+  dashboard.folderId = input.folderId ?? undefined;
+  touchDashboard(dashboard);
+  await saveStore(store);
+  await snapshotDashboard(dashboard, "auto-snapshot:move_dashboard_to_folder");
+  return dashboard;
 }
 
 export async function snapshotDashboardTool(raw: unknown): Promise<DashboardSnapshot> {

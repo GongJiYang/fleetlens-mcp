@@ -12,6 +12,11 @@ import {
   createChartFromDataset,
   createDashboard,
   createDashboardFromTemplate,
+  createDashboardFolder,
+  createDashboardGroup,
+  createDashboardPage,
+  copyDashboardPage,
+  importDashboardPages,
   dashboardNl,
   deleteChart,
   deleteDashboard,
@@ -19,6 +24,9 @@ import {
   ensureUserDataFiles,
   getDataPaths,
   listDashboardFilters,
+  listDashboardFolders,
+  listDashboardGroups,
+  listDashboardPages,
   listDashboardVersions,
   listDashboardsFiltered,
   listDatasetContent,
@@ -27,6 +35,7 @@ import {
   listTemplates,
   listThemePresets,
   removeDashboardFilter,
+  removeDashboardGroupItem,
   renameDashboard,
   registerDataset,
   resetChartPresentation,
@@ -37,10 +46,15 @@ import {
   setChartPresentation,
   setChartTheme,
   snapshotDashboardTool,
+  addDashboardGroupItem,
   undoDashboard,
   updateDashboard,
+  updateDashboardPage,
   updateDashboardFilters,
-  updateDataset
+  updateDataset,
+  deleteDashboardPage,
+  moveChartToPage,
+  moveDashboardToFolder
 } from "./storage.js";
 export { createLocalContentRegistry, localContentRegistry } from "./local-content-registry.js";
 
@@ -361,6 +375,118 @@ export function createLocalWorkspaceStorage(policyAdapter: PolicyAdapter = allow
         context: defaultContext(context)
       });
       return removeDashboardFilter(input);
+    },
+    createDashboardPage: async (input, context?: RequestContext) => {
+      await authorizeOrThrow(policyAdapter, {
+        action: "dashboard.write",
+        resource: { kind: "dashboard", dashboardId: input.dashboardId },
+        context: defaultContext(context)
+      });
+      return createDashboardPage(input);
+    },
+    updateDashboardPage: async (input, context?: RequestContext) => {
+      await authorizeOrThrow(policyAdapter, {
+        action: "dashboard.write",
+        resource: { kind: "dashboard", dashboardId: input.dashboardId },
+        context: defaultContext(context)
+      });
+      return updateDashboardPage(input);
+    },
+    deleteDashboardPage: async (input, context?: RequestContext) => {
+      await authorizeOrThrow(policyAdapter, {
+        action: "dashboard.write",
+        resource: { kind: "dashboard", dashboardId: input.dashboardId },
+        context: defaultContext(context)
+      });
+      return deleteDashboardPage(input);
+    },
+    listDashboardPages: async (input, context?: RequestContext) => {
+      await authorizeOrThrow(policyAdapter, {
+        action: "dashboard.read",
+        resource: { kind: "dashboard", dashboardId: input.dashboardId },
+        context: defaultContext(context)
+      });
+      return listDashboardPages(input);
+    },
+    moveChartToPage: async (input, context?: RequestContext) => {
+      await authorizeOrThrow(policyAdapter, {
+        action: "dashboard.write",
+        resource: { kind: "dashboard", dashboardId: input.sourceDashboardId },
+        context: defaultContext(context)
+      });
+      return moveChartToPage(input);
+    },
+    copyDashboardPage: async (input, context?: RequestContext) => {
+      await authorizeOrThrow(policyAdapter, {
+        action: "dashboard.write",
+        resource: { kind: "dashboard", dashboardId: input.sourceDashboardId },
+        context: defaultContext(context)
+      });
+      return copyDashboardPage(input);
+    },
+    importDashboardPages: async (input, context?: RequestContext) => {
+      await authorizeOrThrow(policyAdapter, {
+        action: "dashboard.write",
+        resource: { kind: "dashboard", dashboardId: input.sourceDashboardId },
+        context: defaultContext(context)
+      });
+      return importDashboardPages(input);
+    },
+    createDashboardFolder: async (input, context?: RequestContext) => {
+      await authorizeOrThrow(policyAdapter, {
+        action: "dashboard.write",
+        resource: { kind: "dashboard", workspaceId: input.workspaceId },
+        context: defaultContext(context)
+      });
+      return createDashboardFolder(input);
+    },
+    listDashboardFolders: async (input, context?: RequestContext) => {
+      await authorizeOrThrow(policyAdapter, {
+        action: "dashboard.read",
+        resource: { kind: "dashboard", workspaceId: input?.workspaceId },
+        context: defaultContext(context)
+      });
+      return listDashboardFolders(input);
+    },
+    createDashboardGroup: async (input, context?: RequestContext) => {
+      await authorizeOrThrow(policyAdapter, {
+        action: "dashboard.write",
+        resource: { kind: "dashboard", workspaceId: input.workspaceId },
+        context: defaultContext(context)
+      });
+      return createDashboardGroup(input);
+    },
+    listDashboardGroups: async (input, context?: RequestContext) => {
+      await authorizeOrThrow(policyAdapter, {
+        action: "dashboard.read",
+        resource: { kind: "dashboard", workspaceId: input?.workspaceId },
+        context: defaultContext(context)
+      });
+      return listDashboardGroups(input);
+    },
+    addDashboardGroupItem: async (input, context?: RequestContext) => {
+      await authorizeOrThrow(policyAdapter, {
+        action: "dashboard.write",
+        resource: { kind: "dashboard", dashboardId: input.dashboardId },
+        context: defaultContext(context)
+      });
+      return addDashboardGroupItem(input);
+    },
+    removeDashboardGroupItem: async (input, context?: RequestContext) => {
+      await authorizeOrThrow(policyAdapter, {
+        action: "dashboard.write",
+        resource: { kind: "dashboard", dashboardId: input.dashboardId },
+        context: defaultContext(context)
+      });
+      return removeDashboardGroupItem(input);
+    },
+    moveDashboardToFolder: async (input, context?: RequestContext) => {
+      await authorizeOrThrow(policyAdapter, {
+        action: "dashboard.write",
+        resource: { kind: "dashboard", dashboardId: input.dashboardId },
+        context: defaultContext(context)
+      });
+      return moveDashboardToFolder(input);
     }
   };
 }
