@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import fsSync from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import {
   addBarChartFromDatasetInputSchema,
@@ -170,6 +171,7 @@ export type DataPaths = {
   dashboards: string;
   dashboardFolders: string;
   dashboardGroups: string;
+  dashboardSeedState: string;
   datasets: string;
   snapshots: string;
   datasetSnapshots: string;
@@ -210,6 +212,7 @@ const dataPaths: DataPaths = (() => {
     dashboards: path.join(baseDir, "dashboards.json"),
     dashboardFolders: path.join(baseDir, "dashboard_folders.json"),
     dashboardGroups: path.join(baseDir, "dashboard_groups.json"),
+    dashboardSeedState: path.join(baseDir, "dashboard_seed_state.json"),
     datasets: path.join(baseDir, "datasets.json"),
     snapshots: path.join(baseDir, "dashboard_versions.json"),
     datasetSnapshots: path.join(baseDir, "dataset_snapshots.json"),
@@ -287,6 +290,21 @@ type Store = {
   dashboards: Dashboard[];
 };
 
+type DashboardSeedStateEntry = {
+  seedId: string;
+  installedDashboardId: string;
+  installedSeedHash: string;
+  latestSeedHash: string;
+  userModified: boolean;
+  updateAvailable: boolean;
+  updatedAt: string;
+};
+
+type DashboardSeedState = {
+  version: 1;
+  entries: DashboardSeedStateEntry[];
+};
+
 type FolderStore = {
   folders: DashboardFolder[];
 };
@@ -318,6 +336,7 @@ type DeletedDashboardStore = {
 };
 
 const emptyStore: Store = { dashboards: [] };
+const emptyDashboardSeedState: DashboardSeedState = { version: 1, entries: [] };
 const emptyFolderStore: FolderStore = { folders: [] };
 const emptyGroupStore: GroupStore = { groups: [] };
 const emptyDatasetStore: DatasetStore = { datasets: [] };
@@ -466,14 +485,66 @@ async function ensureStore(): Promise<Store> {
     return dashboard;
   });
   const repoSeedDashboards = await loadRepoSeedDashboards();
-  const repoSeedDashboardIds = new Set(repoSeedDashboards.map((entry) => entry.id));
-  const syncedDashboards = [
-    ...repoSeedDashboards.map((dashboard) => {
-      syncDashboardPrimaryPage(dashboard);
-      return dashboard;
-    }),
-    ...dashboards.filter((entry) => !repoSeedDashboardIds.has(entry.id))
-  ];
+  const seedState = await readDashboardSeedState();
+  const seedStateBySeedId = new Map(seedState.entries.map((entry) => [entry.seedId, entry]));
+  const userDashboardsById = new Map(dashboards.map((entry) => [entry.id, entry]));
+  const consumedDashboardIds = new Set<string>();
+  const syncedDashboards: Dashboard[] = [];
+  const nextSeedEntries: DashboardSeedStateEntry[] = [];
+
+  for (const repoSeed of repoSeedDashboards) {
+    syncDashboardPrimaryPage(repoSeed);
+    const seedId = repoSeed.id;
+    const repoSeedHash = hashDashboard(repoSeed);
+    const stateEntry = seedStateBySeedId.get(seedId);
+    const installedDashboard =
+      (stateEntry ? userDashboardsById.get(stateEntry.installedDashboardId) : undefined) ?? userDashboardsById.get(seedId);
+
+    if (!installedDashboard) {
+      syncedDashboards.push(repoSeed);
+      consumedDashboardIds.add(repoSeed.id);
+      nextSeedEntries.push({
+        seedId,
+        installedDashboardId: repoSeed.id,
+        installedSeedHash: repoSeedHash,
+        latestSeedHash: repoSeedHash,
+        userModified: false,
+        updateAvailable: false,
+        updatedAt: new Date().toISOString()
+      });
+      continue;
+    }
+
+    consumedDashboardIds.add(installedDashboard.id);
+    const baselineSeedHash = stateEntry?.installedSeedHash ?? repoSeedHash;
+    const installedHash = hashDashboard(installedDashboard);
+    const userModified = installedHash !== baselineSeedHash;
+
+    if (userModified) {
+      syncedDashboards.push(installedDashboard);
+    } else {
+      const seedToApply =
+        installedDashboard.id === repoSeed.id ? repoSeed : { ...repoSeed, id: installedDashboard.id };
+      syncedDashboards.push(seedToApply);
+    }
+
+    const storedDashboard = syncedDashboards[syncedDashboards.length - 1]!;
+    nextSeedEntries.push({
+      seedId,
+      installedDashboardId: storedDashboard.id,
+      installedSeedHash: userModified ? baselineSeedHash : hashDashboard(storedDashboard),
+      latestSeedHash: repoSeedHash,
+      userModified,
+      updateAvailable: userModified && repoSeedHash !== baselineSeedHash,
+      updatedAt: new Date().toISOString()
+    });
+  }
+
+  for (const dashboard of dashboards) {
+    if (consumedDashboardIds.has(dashboard.id)) continue;
+    syncedDashboards.push(dashboard);
+  }
+
   const legacyStylesHydrated = hydrateLegacyPageStyleMetadata(syncedDashboards);
   const changed = legacyStylesHydrated || JSON.stringify(syncedDashboards) !== JSON.stringify(dashboards);
 
@@ -481,7 +552,39 @@ async function ensureStore(): Promise<Store> {
   if (changed) {
     await saveStore(store);
   }
+  await writeDashboardSeedState({ version: 1, entries: nextSeedEntries });
   return store;
+}
+
+function hashDashboard(dashboard: Dashboard): string {
+  return createHash("sha256").update(JSON.stringify(dashboard)).digest("hex");
+}
+
+async function readDashboardSeedState(): Promise<DashboardSeedState> {
+  try {
+    const raw = await fs.readFile(dataPaths.dashboardSeedState, "utf8");
+    const parsed = JSON.parse(raw) as DashboardSeedState;
+    if (parsed.version !== 1 || !Array.isArray(parsed.entries)) return structuredClone(emptyDashboardSeedState);
+    return {
+      version: 1,
+      entries: parsed.entries.filter((entry): entry is DashboardSeedStateEntry => {
+        return Boolean(
+          entry &&
+            typeof entry.seedId === "string" &&
+            typeof entry.installedDashboardId === "string" &&
+            typeof entry.installedSeedHash === "string" &&
+            typeof entry.latestSeedHash === "string"
+        );
+      })
+    };
+  } catch {
+    return structuredClone(emptyDashboardSeedState);
+  }
+}
+
+async function writeDashboardSeedState(state: DashboardSeedState): Promise<void> {
+  await ensureBaseDir();
+  await fs.writeFile(dataPaths.dashboardSeedState, JSON.stringify(state, null, 2), "utf8");
 }
 
 async function saveStore(store: Store): Promise<void> {
