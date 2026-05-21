@@ -80,6 +80,7 @@ import {
   listDashboardGroupsInputSchema,
   addDashboardGroupItemInputSchema,
   removeDashboardGroupItemInputSchema,
+  swapChartPositionsInputSchema,
   moveDashboardToFolderInputSchema,
   type AddBarChartFromDatasetInput,
   type AddComboChartFromDatasetInput,
@@ -152,6 +153,7 @@ import {
   type UpdateDashboardPageInput,
   type DeleteDashboardPageInput,
   type ListDashboardPagesInput,
+  type SwapChartPositionsInput,
   type CreateDashboardFolderInput,
   type ListDashboardFoldersInput,
   type CreateDashboardGroupInput,
@@ -355,6 +357,7 @@ const LIMITS = {
   maxDatasetRows: 50000,
   maxDatasetCsvBytes: 20 * 1024 * 1024
 } as const;
+const DASHBOARD_SNAPSHOT_HISTORY_LIMIT = Math.max(1, Number(process.env.LUMINON_DASHBOARD_SNAPSHOT_LIMIT ?? 10));
 
 const MONTH_INDEX = new Map([
   ["jan", 1],
@@ -781,16 +784,22 @@ async function snapshotDashboard(dashboard: Dashboard, comment?: string): Promis
     createdAt: new Date().toISOString(),
     payload: structuredClone(dashboard)
   });
-  // overwrite single snapshot per dashboard
-  store.snapshots = store.snapshots.filter((s) => s.dashboardId !== dashboard.id);
-  store.snapshots.push(snapshot);
+  const history = store.snapshots
+    .filter((s) => s.dashboardId === dashboard.id)
+    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+  history.unshift(snapshot);
+  const trimmedHistory = history.slice(0, DASHBOARD_SNAPSHOT_HISTORY_LIMIT);
+  const otherSnapshots = store.snapshots.filter((s) => s.dashboardId !== dashboard.id);
+  store.snapshots = [...otherSnapshots, ...trimmedHistory];
   await saveSnapshotStore(store);
   return snapshot;
 }
 
 async function getSnapshot(dashboardId: string): Promise<DashboardSnapshot | undefined> {
   const store = await ensureSnapshotStore();
-  return store.snapshots.find((s) => s.dashboardId === dashboardId);
+  return store.snapshots
+    .filter((s) => s.dashboardId === dashboardId)
+    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0];
 }
 
 async function restoreSnapshot(dashboardId: string, snapshotId?: string, newName?: string): Promise<Dashboard> {
@@ -799,7 +808,9 @@ async function restoreSnapshot(dashboardId: string, snapshotId?: string, newName
   const snapshot =
     snapshotId !== undefined
       ? snapshotStore.snapshots.find((s) => s.id === snapshotId && s.dashboardId === dashboardId)
-      : snapshotStore.snapshots.find((s) => s.dashboardId === dashboardId);
+      : snapshotStore.snapshots
+          .filter((s) => s.dashboardId === dashboardId)
+          .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0];
 
   if (!snapshot) {
     throw new Error(`Snapshot not found for dashboard '${dashboardId}'.`);
@@ -3444,21 +3455,25 @@ async function findDatasetByName(name: string): Promise<Dataset | undefined> {
 }
 
 function extractDashboardNameFromRequest(request: string): string | undefined {
-  const quoted = request.match(/dashboard\\s+\"([^\"]+)\"/i) ?? request.match(/dashboard\\s+'([^']+)'/i);
+  const quoted =
+    request.match(/dashboard\s+["'`]?([^"'`]+)["'`]?/i) ??
+    request.match(/tablero\s+["'`]?([^"'`]+)["'`]?/i);
   if (quoted?.[1]) return quoted[1].trim();
 
-  const simple = request.match(/dashboard\\s+([a-z0-9\\-\\s_]+?)\\s+(a|con|to)\\s+\\d+\\s*column(as)?/i);
+  const simple = request.match(/dashboard\s+([a-z0-9\-\s_]+?)\s+(a|con|to)\s+\d+\s*column(as)?/i);
   if (simple?.[1]) return simple[1].trim();
   return undefined;
 }
 
 function extractDatasetNameFromRequest(request: string): string | undefined {
-  const quoted = request.match(/dataset\\s+\"([^\"]+)\"/i) ?? request.match(/dataset\\s+'([^']+)'/i);
+  const quoted =
+    request.match(/dataset\s+["'`]?([^"'`]+)["'`]?/i) ??
+    request.match(/datos?\s+["'`]?([^"'`]+)["'`]?/i);
   if (quoted?.[1]) return quoted[1].trim();
 
   const simple =
-    request.match(/(?:dataset|datos?)\\s+([a-z0-9\\-\\s_]+?)\\s*(?:$|con|with|para|for)/i) ??
-    request.match(/(?:describe|describe dataset|muestra|show)\\s+([a-z0-9\\-\\s_]+?)\\s*(?:$|dataset|datos?)/i);
+    request.match(/(?:dataset|datos?)\s+([a-z0-9\-\s_]+?)\s*(?:$|con|with|para|for)/i) ??
+    request.match(/(?:describe|describe dataset|muestra|show)\s+([a-z0-9\-\s_]+?)\s*(?:$|dataset|datos?)/i);
   if (simple?.[1]) return simple[1].trim();
   return undefined;
 }
@@ -3472,6 +3487,27 @@ function extractRenameTargetAndName(request: string): { target?: string; newName
   const simple = request.match(/(?:renombra|renombrar|rename)\s+(?:dashboard\s+)?(.+?)\s+(?:a|to)\s+(.+)/i);
   if (simple?.[1] && simple?.[2]) {
     return { target: simple[1].trim(), newName: simple[2].trim() };
+  }
+
+  return {};
+}
+
+function extractSwapChartSelectors(request: string): { chartA?: string; chartB?: string } {
+  const quoted = Array.from(request.matchAll(/["'`]{1}([^"'`]+?)["'`]{1}/g))
+    .map((match) => stripWrappingQuotes(match[1] ?? "").trim())
+    .filter((value) => value.length > 0);
+  if (quoted.length >= 2) {
+    return { chartA: quoted[0], chartB: quoted[1] };
+  }
+
+  const pairMatch = request.match(
+    /(?:swap|switch|interchange|intercambi(?:a|ar|e|en)|permuta)\s+(?:the\s+)?(?:charts?|gr[aá]ficas?)?\s*([^,]+?)\s+(?:and|y)\s+([^,]+?)(?:\s+(?:in|en)\s+(?:dashboard|tablero)\b|$)/i
+  );
+  if (pairMatch?.[1] && pairMatch?.[2]) {
+    return {
+      chartA: stripTrailingSentencePunctuation(stripWrappingQuotes(pairMatch[1])),
+      chartB: stripTrailingSentencePunctuation(stripWrappingQuotes(pairMatch[2]))
+    };
   }
 
   return {};
@@ -3834,7 +3870,10 @@ export async function dashboardNl(input: unknown): Promise<{
 
   if (/(listar|muestra|show|list).*(p[aá]gina|page)/.test(request)) {
     let dashboardId = parsed.dashboardId;
-    const dashboardCandidate = parsed.dashboardName ?? extractDashboardNameFromRequest(parsed.request);
+    const dashboardCandidate =
+      parsed.dashboardName ??
+      extractDashboardNameFromRequest(parsed.request) ??
+      parsed.request.match(/(?:in|en)\s+(?:dashboard|tablero)\s+["'`]?([^"'`]+?)["'`]?/i)?.[1];
     if (!dashboardId && dashboardCandidate) {
       const found = await findDashboardByName(stripWrappingQuotes(dashboardCandidate));
       dashboardId = found?.id;
@@ -3845,6 +3884,34 @@ export async function dashboardNl(input: unknown): Promise<{
       action: "list_dashboard_pages",
       message: "Dashboard pages listed.",
       result: pages
+    };
+  }
+
+  const hasSwapVerb = /(swap|switch|interchange|intercambi|permuta)/.test(request);
+  const quotedSelectors = Array.from(parsed.request.matchAll(/["'`]{1}([^"'`]+?)["'`]{1}/g));
+  if (hasSwapVerb && (/(chart|gr[aá]fica)/.test(request) || quotedSelectors.length >= 2)) {
+    const { chartA, chartB } = extractSwapChartSelectors(parsed.request);
+    if (!chartA || !chartB) {
+      throw new Error(
+        "Could not infer the two charts to swap. Use explicit chart titles, for example: swap \"Chart A\" and \"Chart B\" in dashboard \"Sales Performance Hub\"."
+      );
+    }
+    let dashboardId = parsed.dashboardId;
+    const dashboardCandidate = parsed.dashboardName ?? extractDashboardNameFromRequest(parsed.request);
+    if (!dashboardId && dashboardCandidate) {
+      const found = await findDashboardByName(stripWrappingQuotes(dashboardCandidate));
+      dashboardId = found?.id;
+    }
+    const activeDashboardId = dashboardId ?? (await resolveDefaultDashboard(undefined));
+    const swapped = await swapChartPositions({
+      dashboardId: activeDashboardId,
+      chartA,
+      chartB
+    });
+    return {
+      action: "swap_chart_positions",
+      message: `Swapped chart positions for '${chartA}' and '${chartB}' without recreating dashboard content.`,
+      result: swapped
     };
   }
 
@@ -4460,7 +4527,7 @@ export async function dashboardNl(input: unknown): Promise<{
   }
 
   throw new Error(
-    "Could not map request. Try intents like: 'create a dashboard', 'list datasets', 'describe dataset sales_complex', 'add a bar/line/area/scatter/radar/donut/funnel/combo chart', 'add a KPI', or 'add a table'."
+    "Could not map request. Try intents like: 'create a dashboard', 'list datasets', 'describe dataset sales_complex', 'swap \"Chart A\" and \"Chart B\" in dashboard \"Sales Performance Hub\"', 'add a bar/line/area/scatter/radar/donut/funnel/combo chart', 'add a KPI', or 'add a table'."
   );
 }
 
@@ -4614,6 +4681,62 @@ export async function listDashboardPages(raw: unknown): Promise<DashboardPage[]>
   const dashboard = store.dashboards.find((d) => d.id === input.dashboardId);
   if (!dashboard) throw new Error(`Dashboard not found: ${input.dashboardId}`);
   return ensureDashboardPages(dashboard).sort((a, b) => a.pageOrder - b.pageOrder);
+}
+
+export async function swapChartPositions(raw: unknown): Promise<Dashboard> {
+  const input = parseWithSchema(swapChartPositionsInputSchema, raw) as SwapChartPositionsInput;
+  const store = await ensureStore();
+  const dashboard = store.dashboards.find((entry) => entry.id === input.dashboardId);
+  if (!dashboard) throw new Error(`Dashboard not found: ${input.dashboardId}`);
+
+  const pages = ensureDashboardPages(dashboard).sort((a, b) => a.pageOrder - b.pageOrder);
+  const normalizedA = stripWrappingQuotes(input.chartA).trim().toLowerCase();
+  const normalizedB = stripWrappingQuotes(input.chartB).trim().toLowerCase();
+  const pageHint = input.pageId ? findDashboardPageBySelector(pages, input.pageId) : undefined;
+  const searchPages = pageHint ? [pageHint] : pages;
+
+  const resolveChart = (selectorLower: string): { page: DashboardPage; chart: Chart } | undefined => {
+    for (const page of searchPages) {
+      const exact = page.charts.find(
+        (chart) => chart.id.toLowerCase() === selectorLower || (chart.title ?? "").trim().toLowerCase() === selectorLower
+      );
+      if (exact) return { page, chart: exact };
+    }
+    for (const page of searchPages) {
+      const fuzzy = page.charts.find(
+        (chart) => chart.id.toLowerCase().includes(selectorLower) || (chart.title ?? "").toLowerCase().includes(selectorLower)
+      );
+      if (fuzzy) return { page, chart: fuzzy };
+    }
+    return undefined;
+  };
+
+  const first = resolveChart(normalizedA);
+  const second = resolveChart(normalizedB);
+  if (!first) throw new Error(`Could not resolve chartA '${input.chartA}' in dashboard '${dashboard.id}'.`);
+  if (!second) throw new Error(`Could not resolve chartB '${input.chartB}' in dashboard '${dashboard.id}'.`);
+  if (first.chart.id === second.chart.id) throw new Error("chartA and chartB must resolve to different charts.");
+  if (first.page.id !== second.page.id) throw new Error("Swap requires both charts to be on the same dashboard page.");
+
+  const page = first.page;
+  const firstLayoutItem = page.layout.items.find((item) => item.chart === first.chart.id);
+  const secondLayoutItem = page.layout.items.find((item) => item.chart === second.chart.id);
+  if (!firstLayoutItem || !secondLayoutItem) {
+    throw new Error("Both charts must exist in page layout items to swap positions.");
+  }
+
+  const firstX = firstLayoutItem.x;
+  const firstY = firstLayoutItem.y;
+  firstLayoutItem.x = secondLayoutItem.x;
+  firstLayoutItem.y = secondLayoutItem.y;
+  secondLayoutItem.x = firstX;
+  secondLayoutItem.y = firstY;
+
+  dashboard.pages = pages;
+  touchDashboard(dashboard);
+  await saveStore(store);
+  await snapshotDashboard(dashboard, "auto-snapshot:swap_chart_positions");
+  return dashboard;
 }
 
 export async function moveChartToPage(raw: unknown): Promise<Dashboard> {
@@ -4960,6 +5083,7 @@ export async function listDashboardVersions(raw: unknown): Promise<DashboardSnap
   const store = await ensureSnapshotStore();
   return store.snapshots
     .filter((s) => s.dashboardId === parsed.dashboardId)
+    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
     .slice(parsed.offset, parsed.offset + parsed.limit);
 }
 

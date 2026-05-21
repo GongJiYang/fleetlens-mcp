@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.1 - 2026-05-21
+
+- Hardened seed reconciliation so user-edited demo dashboards are preserved across updates instead of being overwritten by repo seeds.
+- Added an optional Luminon tool-policy skill for Codex and documented how Claude CLI and Gemini CLI can reuse the same policy text.
+- Documented the agent usage flow in `docs/MCP_DOCUMENTATION.md` and clarified how to install or reuse the policy for different clients.
+- Kept the 0.9.x release line focused on compatibility and non-destructive behavior rather than feature-surface changes.
+
 ## 0.9.0 - 2026-05-20
 
 - Added dual runtime flow for local and remote MCP operation without breaking stdio usage:

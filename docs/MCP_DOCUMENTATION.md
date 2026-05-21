@@ -18,6 +18,34 @@ Luminon is a local-first dashboard workspace made of four pieces:
 
 This document describes the code that exists in this repository today. It intentionally excludes older or confusing behavior that is no longer exposed.
 
+For strict AI client behavior (minimal non-destructive tool usage), see:
+
+- `docs/LLM_TOOL_POLICY.md`
+- `skills/luminon-tool-policy/SKILL.md`
+
+## AI Agent Setup
+
+Use the policy and skill only when the client is going to mutate dashboards, pages, charts, groups, folders, or sharing state.
+
+### Codex
+
+- Optional skill location in this repo: `skills/luminon-tool-policy/`
+- To install locally for Codex, copy that folder into `~/.codex/skills/luminon-tool-policy`
+- Restart Codex after installing the skill so it is discoverable
+- The skill is meant for mutation tasks; read-only questions do not need it
+
+### Claude CLI
+
+- Claude does not load Codex skills directly
+- Use `docs/LLM_TOOL_POLICY.md` as the session policy text or paste its contents into project instructions
+- For mutation tasks, prefer the explicit tools named in the policy over free-form natural language
+
+### Gemini CLI
+
+- Gemini does not load Codex skills directly
+- Use `docs/LLM_TOOL_POLICY.md` as the prompt policy or include it in persistent instructions
+- For dangerous mutations, require the client to read the policy before acting
+
 ## Repository Structure
 
 - `packages/shared`: shared Zod schemas, chart types, filter contracts, template schemas, and TypeScript types

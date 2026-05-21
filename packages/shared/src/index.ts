@@ -773,6 +773,17 @@ export const moveChartToPageInputSchema = z.object({
   targetPageSlug: z.string().min(1).optional()
 });
 
+export const swapChartPositionsInputSchema = z
+  .object({
+    dashboardId: z.string().min(1),
+    chartA: z.string().min(1),
+    chartB: z.string().min(1),
+    pageId: z.string().min(1).optional()
+  })
+  .refine((value) => value.chartA.trim().toLowerCase() !== value.chartB.trim().toLowerCase(), {
+    message: "chartA and chartB must refer to different charts"
+  });
+
 export const copyDashboardPageInputSchema = z.object({
   sourceDashboardId: z.string().min(1),
   targetDashboardId: z.string().min(1),
@@ -1149,6 +1160,7 @@ export type UpdateDashboardPageInput = z.infer<typeof updateDashboardPageInputSc
 export type DeleteDashboardPageInput = z.infer<typeof deleteDashboardPageInputSchema>;
 export type ListDashboardPagesInput = z.infer<typeof listDashboardPagesInputSchema>;
 export type MoveChartToPageInput = z.infer<typeof moveChartToPageInputSchema>;
+export type SwapChartPositionsInput = z.infer<typeof swapChartPositionsInputSchema>;
 export type CopyDashboardPageInput = z.infer<typeof copyDashboardPageInputSchema>;
 export type ImportDashboardPagesInput = z.infer<typeof importDashboardPagesInputSchema>;
 export type CreateDashboardFolderInput = z.infer<typeof createDashboardFolderInputSchema>;

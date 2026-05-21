@@ -46,7 +46,8 @@ import type {
   CopyDashboardPageInput,
   DeleteDashboardPageInput,
   ImportDashboardPagesInput,
-  MoveChartToPageInput
+  MoveChartToPageInput,
+  SwapChartPositionsInput
 } from "../../shared/dist/index.js";
 
 export type DataPaths = {
@@ -178,6 +179,7 @@ export interface WorkspaceDataBackend {
   deleteDashboardPage(input: DeleteDashboardPageInput, context?: RequestContext): Promise<Dashboard>;
   listDashboardPages(input: ListDashboardPagesInput, context?: RequestContext): Promise<DashboardPage[]>;
   moveChartToPage(input: MoveChartToPageInput, context?: RequestContext): Promise<Dashboard>;
+  swapChartPositions(input: SwapChartPositionsInput, context?: RequestContext): Promise<Dashboard>;
   copyDashboardPage(input: CopyDashboardPageInput, context?: RequestContext): Promise<Dashboard>;
   importDashboardPages(input: ImportDashboardPagesInput, context?: RequestContext): Promise<Dashboard>;
   createDashboardFolder(input: CreateDashboardFolderInput, context?: RequestContext): Promise<DashboardFolder>;

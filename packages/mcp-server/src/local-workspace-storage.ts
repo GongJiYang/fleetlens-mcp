@@ -54,6 +54,7 @@ import {
   updateDataset,
   deleteDashboardPage,
   moveChartToPage,
+  swapChartPositions,
   moveDashboardToFolder
 } from "./storage.js";
 export { createLocalContentRegistry, localContentRegistry } from "./local-content-registry.js";
@@ -415,6 +416,14 @@ export function createLocalWorkspaceStorage(policyAdapter: PolicyAdapter = allow
         context: defaultContext(context)
       });
       return moveChartToPage(input);
+    },
+    swapChartPositions: async (input, context?: RequestContext) => {
+      await authorizeOrThrow(policyAdapter, {
+        action: "dashboard.write",
+        resource: { kind: "dashboard", dashboardId: input.dashboardId },
+        context: defaultContext(context)
+      });
+      return swapChartPositions(input);
     },
     copyDashboardPage: async (input, context?: RequestContext) => {
       await authorizeOrThrow(policyAdapter, {

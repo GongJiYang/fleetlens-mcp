@@ -228,3 +228,119 @@ test("page move/copy/import tools work across dashboards and pages", async () =>
     delete process.env.MCP_DATA_DIR;
   }
 });
+
+test("snapshot history keeps up to 10 versions per dashboard and restores latest by default", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "luminon-snapshots-"));
+
+  try {
+    const storage = await loadStorage(tempDir);
+    await storage.ensureUserDataFiles();
+
+    const dashboard = await storage.createDashboard({
+      name: "Snapshot Target",
+      layout: { grid: { columns: 3, rows: 3 }, items: [] }
+    });
+
+    for (let i = 1; i <= 12; i += 1) {
+      await storage.updateDashboard({
+        dashboardId: dashboard.id,
+        name: `Snapshot Target v${i}`
+      });
+      await storage.snapshotDashboardTool({
+        dashboardId: dashboard.id,
+        comment: `manual-${i}`
+      });
+    }
+
+    const versions = await storage.listDashboardVersions({
+      dashboardId: dashboard.id,
+      limit: 20,
+      offset: 0
+    });
+    assert.equal(versions.length, 10, "Expected snapshot history to be trimmed to 10");
+    assert.ok(
+      versions.every((snapshot) => snapshot.payload.id === dashboard.id),
+      "Expected snapshots to belong to the same dashboard"
+    );
+    assert.equal(versions[0]?.payload.name, "Snapshot Target v12");
+
+    await storage.updateDashboard({
+      dashboardId: dashboard.id,
+      name: "Snapshot Target modified"
+    });
+    const latestRetainedId = versions[0]?.id;
+    assert.ok(latestRetainedId, "Expected latest retained snapshot id");
+    const restoredLatest = await storage.restoreDashboardVersion({
+      dashboardId: dashboard.id,
+      snapshotId: latestRetainedId
+    });
+    assert.equal(restoredLatest.name, "Snapshot Target v12");
+
+    const versionsAfterRestore = await storage.listDashboardVersions({
+      dashboardId: dashboard.id,
+      limit: 20,
+      offset: 0
+    });
+    assert.equal(versionsAfterRestore.length, 10, "Expected snapshot history to remain capped at 10");
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+    delete process.env.MCP_DATA_DIR;
+  }
+});
+
+test("dashboard_nl swap uses non-destructive layout mutation for existing charts", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "luminon-swap-"));
+
+  try {
+    const storage = await loadStorage(tempDir);
+    await storage.ensureUserDataFiles();
+
+    const sales = (await storage.listDashboards()).find((dashboard) => dashboard.name === "Sales Performance Hub");
+    assert.ok(sales, "Expected seeded Sales Performance Hub dashboard");
+
+    const pagesBefore = await storage.listDashboardPages({ dashboardId: sales.id });
+    const mainBefore = pagesBefore[0];
+    assert.ok(mainBefore, "Expected at least one page");
+    const chartA = mainBefore.charts.find((chart) => chart.title === "Average Order Value by Country and Channel");
+    const chartB = mainBefore.charts.find((chart) => chart.title === "Orders by Category");
+    assert.ok(chartA && chartB, "Expected both charts to exist");
+    const itemABefore = mainBefore.layout.items.find((item) => item.chart === chartA.id);
+    const itemBBefore = mainBefore.layout.items.find((item) => item.chart === chartB.id);
+    assert.ok(itemABefore && itemBBefore, "Expected both charts to exist in layout");
+    const beforeA = { x: itemABefore.x, y: itemABefore.y, w: itemABefore.w, h: itemABefore.h };
+    const beforeB = { x: itemBBefore.x, y: itemBBefore.y, w: itemBBefore.w, h: itemBBefore.h };
+
+    const dashboardBefore = (await storage.listDashboards()).find((dashboard) => dashboard.id === sales.id);
+    assert.ok(dashboardBefore, "Expected dashboard snapshot before swap");
+    const chartIdsBefore = new Set(dashboardBefore.charts.map((chart) => chart.id));
+
+    const result = await storage.dashboardNl({
+      request:
+        'Swap the positions of "Average Order Value by Country and Channel" and "Orders by Category" in dashboard "Sales Performance Hub".'
+    });
+    assert.equal(result.action, "swap_chart_positions");
+
+    const pagesAfter = await storage.listDashboardPages({ dashboardId: sales.id });
+    const mainAfter = pagesAfter[0];
+    const itemAAfter = mainAfter.layout.items.find((item) => item.chart === chartA.id);
+    const itemBAfter = mainAfter.layout.items.find((item) => item.chart === chartB.id);
+    assert.ok(itemAAfter && itemBAfter, "Expected both charts in layout after swap");
+
+    assert.equal(itemAAfter.x, beforeB.x);
+    assert.equal(itemAAfter.y, beforeB.y);
+    assert.equal(itemBAfter.x, beforeA.x);
+    assert.equal(itemBAfter.y, beforeA.y);
+    assert.equal(itemAAfter.w, beforeA.w);
+    assert.equal(itemAAfter.h, beforeA.h);
+    assert.equal(itemBAfter.w, beforeB.w);
+    assert.equal(itemBAfter.h, beforeB.h);
+
+    const dashboardAfter = (await storage.listDashboards()).find((dashboard) => dashboard.id === sales.id);
+    assert.ok(dashboardAfter, "Expected dashboard after swap");
+    assert.deepEqual(new Set(dashboardAfter.charts.map((chart) => chart.id)), chartIdsBefore);
+    assert.equal(dashboardAfter.charts.length, dashboardBefore.charts.length);
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+    delete process.env.MCP_DATA_DIR;
+  }
+});

@@ -34,6 +34,7 @@ import {
   deleteDashboardPageInputSchema,
   listDashboardPagesInputSchema,
   moveChartToPageInputSchema,
+  swapChartPositionsInputSchema,
   createDashboardFolderInputSchema,
   listDashboardFoldersInputSchema,
   createDashboardGroupInputSchema,
@@ -89,7 +90,8 @@ const LITE_TOOLS = new Set([
   "describe_dataset",
   "create_chart",
   "list_dashboard_filters",
-  "update_dashboard_filters"
+  "update_dashboard_filters",
+  "swap_chart_positions"
 ]);
 
 const ULTRA_LITE_TOOLS = new Set([
@@ -1121,6 +1123,29 @@ export function createLuminonMcpServer(options?: {
           chartId: input.chartId,
           sourceDashboardId: input.sourceDashboardId,
           targetDashboardId: input.targetDashboardId
+        });
+      }
+    );
+  }
+
+  if (toolEnabled("swap_chart_positions", toolMode)) {
+    server.tool(
+      "swap_chart_positions",
+      "Swap two chart layout positions atomically within the same dashboard page. Keeps chart size unchanged and does not recreate dashboard content.",
+      { input: swapChartPositionsInputSchema },
+      async ({ input }, extra) => {
+        const context = await authorizeRequest(
+          policyAdapter,
+          "dashboard.write",
+          { kind: "dashboard", dashboardId: input.dashboardId },
+          extra,
+          { enforcePolicy, requestSource }
+        );
+        const dashboard = await backend.swapChartPositions(input, context);
+        return dashboardResponse(dashboard, {
+          chartA: input.chartA,
+          chartB: input.chartB,
+          dashboardId: input.dashboardId
         });
       }
     );

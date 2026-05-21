@@ -1,0 +1,4 @@
+version: 1
+display_name: Luminon Tool Policy
+short_description: Strict non-destructive instructions for Luminon dashboard tool use.
+default_prompt: Use the Luminon tool policy to avoid destructive edits and prefer atomic tools for dashboard mutations.
