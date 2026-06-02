@@ -222,6 +222,30 @@ const dataPaths: DataPaths = (() => {
   };
 })();
 
+const STORE_WRITE_LOCK_TIMEOUT_MS = 10_000;
+const STORE_WRITE_LOCK_RETRY_MS = 100;
+const STORE_WRITE_LOCK_STALE_MS = 60_000;
+
+type StoreWriteLockState = {
+  pid: number;
+  acquiredAt: string;
+  expectedRevision: string | null;
+};
+
+class StoreWriteConflictError extends Error {
+  code = "STORE_WRITE_CONFLICT" as const;
+
+  constructor(message: string) {
+    super(message);
+    this.name = "StoreWriteConflictError";
+  }
+}
+
+const dashboardStoreRevisions = new WeakMap<Store, string | null>();
+const folderStoreRevisions = new WeakMap<FolderStore, string | null>();
+const groupStoreRevisions = new WeakMap<GroupStore, string | null>();
+const deletedStoreRevisions = new WeakMap<DeletedDashboardStore, string | null>();
+
 export function getDataPaths(): DataPaths {
   return { ...dataPaths };
 }
@@ -552,8 +576,16 @@ async function ensureStore(): Promise<Store> {
   const changed = legacyStylesHydrated || JSON.stringify(syncedDashboards) !== JSON.stringify(dashboards);
 
   const store = { dashboards: syncedDashboards };
+  dashboardStoreRevisions.set(store, await readStoreRevision(dataPaths.dashboards));
   if (changed) {
-    await saveStore(store);
+    try {
+      await saveStore(store);
+    } catch (error) {
+      if (error instanceof StoreWriteConflictError) {
+        return ensureStore();
+      }
+      throw error;
+    }
   }
   await writeDashboardSeedState({ version: 1, entries: nextSeedEntries });
   return store;
@@ -590,9 +622,133 @@ async function writeDashboardSeedState(state: DashboardSeedState): Promise<void>
   await fs.writeFile(dataPaths.dashboardSeedState, JSON.stringify(state, null, 2), "utf8");
 }
 
-async function saveStore(store: Store): Promise<void> {
+function hashText(text: string): string {
+  return createHash("sha256").update(text).digest("hex");
+}
+
+async function readStoreRevision(filePath: string): Promise<string | null> {
+  try {
+    const raw = await fs.readFile(filePath, "utf8");
+    return hashText(raw);
+  } catch {
+    return null;
+  }
+}
+
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function readStoreWriteLockState(lockPath: string): Promise<StoreWriteLockState | null> {
+  try {
+    const raw = await fs.readFile(lockPath, "utf8");
+    const parsed = JSON.parse(raw) as Partial<StoreWriteLockState>;
+    if (
+      typeof parsed.pid !== "number" ||
+      typeof parsed.acquiredAt !== "string" ||
+      (parsed.expectedRevision !== null &&
+        parsed.expectedRevision !== undefined &&
+        typeof parsed.expectedRevision !== "string")
+    ) {
+      return null;
+    }
+    return {
+      pid: parsed.pid,
+      acquiredAt: parsed.acquiredAt,
+      expectedRevision: parsed.expectedRevision ?? null
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function cleanupStoreWriteLock(lockPath: string): Promise<void> {
+  try {
+    await fs.unlink(lockPath);
+  } catch {
+    // ignore
+  }
+}
+
+async function acquireStoreWriteLock(lockPath: string, expectedRevision: string | null): Promise<fs.FileHandle> {
   await ensureBaseDir();
-  await fs.writeFile(dataPaths.dashboards, JSON.stringify(store, null, 2), "utf8");
+  const deadline = Date.now() + STORE_WRITE_LOCK_TIMEOUT_MS;
+
+  for (;;) {
+    try {
+      const handle = await fs.open(lockPath, "wx");
+      await handle.writeFile(
+        JSON.stringify(
+          {
+            pid: process.pid,
+            acquiredAt: new Date().toISOString(),
+            expectedRevision
+          } satisfies StoreWriteLockState,
+          null,
+          2
+        ),
+        "utf8"
+      );
+      return handle;
+    } catch (error) {
+      const code = error instanceof Error ? (error as NodeJS.ErrnoException).code : undefined;
+      if (code !== "EEXIST") throw error;
+
+      const lockState = await readStoreWriteLockState(lockPath);
+      const lockAgeMs = lockState ? Date.now() - new Date(lockState.acquiredAt).getTime() : Number.POSITIVE_INFINITY;
+      const shouldBreakLock =
+        !lockState ||
+        !Number.isFinite(lockAgeMs) ||
+        lockAgeMs > STORE_WRITE_LOCK_STALE_MS ||
+        !isPidAlive(lockState.pid);
+
+      if (shouldBreakLock) {
+        await cleanupStoreWriteLock(lockPath);
+        continue;
+      }
+
+      if (Date.now() >= deadline) {
+        throw new Error(`Timed out waiting for store write lock: ${lockPath}`);
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, STORE_WRITE_LOCK_RETRY_MS));
+    }
+  }
+}
+
+async function withStoreWriteLock<T>(lockPath: string, expectedRevision: string | null, run: () => Promise<T>): Promise<T> {
+  const handle = await acquireStoreWriteLock(lockPath, expectedRevision);
+  try {
+    return await run();
+  } finally {
+    try {
+      await handle.close();
+    } catch {
+      // ignore
+    }
+    await cleanupStoreWriteLock(lockPath);
+  }
+}
+
+async function saveStore(store: Store): Promise<void> {
+  const expectedRevision = dashboardStoreRevisions.get(store) ?? null;
+  await withStoreWriteLock(`${dataPaths.dashboards}.lock`, expectedRevision, async () => {
+    const currentRevision = await readStoreRevision(dataPaths.dashboards);
+    if (expectedRevision !== currentRevision) {
+      throw new StoreWriteConflictError(
+        "Dashboard store changed while this session was editing it. Reopen the dashboards and retry the operation."
+      );
+    }
+
+    await ensureBaseDir();
+    await fs.writeFile(dataPaths.dashboards, JSON.stringify(store, null, 2), "utf8");
+    dashboardStoreRevisions.set(store, await readStoreRevision(dataPaths.dashboards));
+  });
 }
 
 async function ensureFolderStore(): Promise<FolderStore> {
@@ -605,13 +761,24 @@ async function ensureFolderStore(): Promise<FolderStore> {
   cachedFolderStore = {
     folders: (parsed.folders ?? []).map((item) => dashboardFolderSchema.parse(item))
   };
+  folderStoreRevisions.set(cachedFolderStore, await readStoreRevision(dataPaths.dashboardFolders));
   return cachedFolderStore;
 }
 
 async function saveFolderStore(store: FolderStore): Promise<void> {
-  cachedFolderStore = store;
-  await ensureBaseDir();
-  await fs.writeFile(dataPaths.dashboardFolders, JSON.stringify(store, null, 2), "utf8");
+  const expectedRevision = folderStoreRevisions.get(store) ?? null;
+  await withStoreWriteLock(`${dataPaths.dashboardFolders}.lock`, expectedRevision, async () => {
+    const currentRevision = await readStoreRevision(dataPaths.dashboardFolders);
+    if (expectedRevision !== currentRevision) {
+      throw new StoreWriteConflictError(
+        "Dashboard folder store changed while this session was editing it. Reload folders and retry the operation."
+      );
+    }
+    cachedFolderStore = store;
+    await ensureBaseDir();
+    await fs.writeFile(dataPaths.dashboardFolders, JSON.stringify(store, null, 2), "utf8");
+    folderStoreRevisions.set(store, await readStoreRevision(dataPaths.dashboardFolders));
+  });
 }
 
 async function ensureGroupStore(): Promise<GroupStore> {
@@ -624,13 +791,24 @@ async function ensureGroupStore(): Promise<GroupStore> {
   cachedGroupStore = {
     groups: (parsed.groups ?? []).map((item) => dashboardGroupSchema.parse(item))
   };
+  groupStoreRevisions.set(cachedGroupStore, await readStoreRevision(dataPaths.dashboardGroups));
   return cachedGroupStore;
 }
 
 async function saveGroupStore(store: GroupStore): Promise<void> {
-  cachedGroupStore = store;
-  await ensureBaseDir();
-  await fs.writeFile(dataPaths.dashboardGroups, JSON.stringify(store, null, 2), "utf8");
+  const expectedRevision = groupStoreRevisions.get(store) ?? null;
+  await withStoreWriteLock(`${dataPaths.dashboardGroups}.lock`, expectedRevision, async () => {
+    const currentRevision = await readStoreRevision(dataPaths.dashboardGroups);
+    if (expectedRevision !== currentRevision) {
+      throw new StoreWriteConflictError(
+        "Dashboard group store changed while this session was editing it. Reload groups and retry the operation."
+      );
+    }
+    cachedGroupStore = store;
+    await ensureBaseDir();
+    await fs.writeFile(dataPaths.dashboardGroups, JSON.stringify(store, null, 2), "utf8");
+    groupStoreRevisions.set(store, await readStoreRevision(dataPaths.dashboardGroups));
+  });
 }
 
 async function ensureDatasetStore(): Promise<DatasetStore> {
@@ -748,13 +926,24 @@ async function ensureDeletedStore(): Promise<DeletedDashboardStore> {
   cachedDeletedStore = {
     dashboards: (parsed.dashboards ?? []).map((d) => deletedDashboardSchema.parse(d))
   };
+  deletedStoreRevisions.set(cachedDeletedStore, await readStoreRevision(dataPaths.deletedDashboards));
   return cachedDeletedStore!;
 }
 
 async function saveDeletedStore(store: DeletedDashboardStore): Promise<void> {
-  cachedDeletedStore = store;
-  await ensureBaseDir();
-  await fs.writeFile(dataPaths.deletedDashboards, JSON.stringify(store, null, 2), "utf8");
+  const expectedRevision = deletedStoreRevisions.get(store) ?? null;
+  await withStoreWriteLock(`${dataPaths.deletedDashboards}.lock`, expectedRevision, async () => {
+    const currentRevision = await readStoreRevision(dataPaths.deletedDashboards);
+    if (expectedRevision !== currentRevision) {
+      throw new StoreWriteConflictError(
+        "Deleted dashboard store changed while this session was editing it. Reload deleted dashboards and retry."
+      );
+    }
+    cachedDeletedStore = store;
+    await ensureBaseDir();
+    await fs.writeFile(dataPaths.deletedDashboards, JSON.stringify(store, null, 2), "utf8");
+    deletedStoreRevisions.set(store, await readStoreRevision(dataPaths.deletedDashboards));
+  });
 }
 
 async function resolveTemplate(templateId: string): Promise<Template> {
