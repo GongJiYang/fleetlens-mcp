@@ -7,7 +7,7 @@
   },
   "license": "MIT",
   "bin": {
-    "luminon": "packages/cli/dist/index.js"
+    "luminon": "bin/luminon.js"
   },
   "workspaces": [
     "packages/*"
@@ -23,7 +23,8 @@
     "CHANGELOG.md",
     "docs/MCP_DOCUMENTATION.md",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "bin/luminon.js"
   ],
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.11.0",
@@ -43,5 +44,6 @@
   },
   "devDependencies": {
     "concurrently": "^9.1.0"
-  }
+  },
+  "type": "module"
 }

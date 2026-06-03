@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
 import { createCipheriv, createDecipheriv, createHash, randomBytes, scryptSync } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -485,34 +485,16 @@ function stop(target: StopTarget): void {
   }
 }
 
-function attachMcpLock(child: ChildProcess): void {
-  updateManagedProcess("mcp", {
-    pid: child.pid,
-    startedAt: new Date().toISOString(),
-    mode: "stdio"
-  });
-
-  const cleanup = () => {
-    const current = loadLock().mcp;
-    if (current?.pid === child.pid) {
-      updateManagedProcess("mcp", undefined);
-    }
-  };
-
-  child.on("exit", cleanup);
-  child.on("error", cleanup);
-  process.on("SIGINT", cleanup);
-  process.on("SIGTERM", cleanup);
-  process.on("exit", cleanup);
+function clearStdioMcpLock(): void {
+  const lock = loadLock();
+  if (lock.mcp?.mode === "stdio") {
+    updateManagedProcess("mcp", undefined);
+  }
 }
 
 function runMcpStdio(modeOverride?: McpMode): void {
   ensureBaseDir();
-  const existing = loadLock().mcp;
-  if (existing?.pid && pidAlive(existing.pid)) {
-    console.error("MCP is already running. Use 'luminon status' or 'luminon stop mcp'.");
-    process.exit(1);
-  }
+  clearStdioMcpLock();
 
   const { command, args } = commandFor("mcp");
   const child = spawn(command, args, {
@@ -524,7 +506,6 @@ function runMcpStdio(modeOverride?: McpMode): void {
     },
     stdio: ["pipe", "pipe", "pipe"]
   });
-  attachMcpLock(child);
 
   process.stdin.pipe(child.stdin!);
   child.stdout!.pipe(process.stdout);
