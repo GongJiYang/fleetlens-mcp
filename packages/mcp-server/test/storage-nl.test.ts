@@ -6,7 +6,7 @@ import test from "node:test";
 
 async function loadStorage(tempDir: string) {
   process.env.MCP_DATA_DIR = tempDir;
-  return import("../dist/storage.js");
+  return import(`../dist/storage.js?dataDir=${encodeURIComponent(tempDir)}&ts=${Date.now()}`);
 }
 
 test("dashboard_nl handles folders, groups, pages and dashboard move flows", async () => {
@@ -282,6 +282,64 @@ test("snapshot history keeps up to 10 versions per dashboard and restores latest
       offset: 0
     });
     assert.equal(versionsAfterRestore.length, 10, "Expected snapshot history to remain capped at 10");
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+    delete process.env.MCP_DATA_DIR;
+  }
+});
+
+test("deleteChart removes charts from dashboard pages and updates counts", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "luminon-delete-chart-"));
+
+  try {
+    const storage = await loadStorage(tempDir);
+    await storage.ensureUserDataFiles();
+
+    const dashboards = await storage.listDashboards();
+    const seedSource = dashboards.find((dashboard) => (dashboard.pages?.[0]?.charts?.length ?? dashboard.charts.length) > 0);
+    assert.ok(seedSource, "Expected a seeded dashboard with charts");
+
+    const target = await storage.createDashboard({
+      name: "Delete Chart Test",
+      layout: { grid: { columns: 3, rows: 3 }, items: [] }
+    });
+
+    const initialPages = await storage.listDashboardPages({ dashboardId: target.id });
+    const initialPrimary = initialPages[0];
+    assert.ok(initialPrimary, "Expected the created dashboard to have a primary page");
+
+    await storage.copyDashboardPage({
+      sourceDashboardId: seedSource.id,
+      targetDashboardId: target.id,
+      targetPageId: initialPrimary.id
+    });
+
+    const pagesBefore = await storage.listDashboardPages({ dashboardId: target.id });
+    const primaryBefore = pagesBefore[0];
+    assert.ok(primaryBefore, "Expected a primary page");
+    assert.ok(primaryBefore.charts.length > 0, "Expected copied charts");
+
+    const chartId = primaryBefore.charts[0]!.id;
+    const initialCount = primaryBefore.charts.length;
+
+    await storage.deleteChart({
+      dashboardId: target.id,
+      chartId,
+      confirm: "DELETE"
+    });
+
+    const dashboardsAfter = await storage.listDashboards();
+    const updatedDashboard = dashboardsAfter.find((dashboard) => dashboard.id === target.id);
+    assert.ok(updatedDashboard, "Expected dashboard to remain after delete");
+    assert.equal(updatedDashboard.charts.length, initialCount - 1);
+    assert.ok(updatedDashboard.charts.every((chart) => chart.id !== chartId));
+
+    const pagesAfter = await storage.listDashboardPages({ dashboardId: target.id });
+    const primaryAfter = pagesAfter[0];
+    assert.ok(primaryAfter, "Expected a primary page after delete");
+    assert.equal(primaryAfter.charts.length, initialCount - 1);
+    assert.ok(primaryAfter.charts.every((chart) => chart.id !== chartId));
+    assert.ok(primaryAfter.layout.items.every((item) => item.chart !== chartId));
   } finally {
     await fs.rm(tempDir, { recursive: true, force: true });
     delete process.env.MCP_DATA_DIR;

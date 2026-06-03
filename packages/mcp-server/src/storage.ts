@@ -1371,15 +1371,16 @@ function slugify(value: string, fallback = "page"): string {
 
 function ensureDashboardPages(dashboard: Dashboard): DashboardPage[] {
   if (Array.isArray(dashboard.pages) && dashboard.pages.length > 0) {
-    return dashboard.pages.map((page, index) =>
+    dashboard.pages = dashboard.pages.map((page, index) =>
       dashboardPageSchema.parse({
         ...page,
         pageOrder: Number.isInteger(page.pageOrder) ? page.pageOrder : index
       })
     );
+    return dashboard.pages;
   }
 
-  return [
+  dashboard.pages = [
     dashboardPageSchema.parse({
       id: "page_main",
       name: "Overview",
@@ -1390,6 +1391,7 @@ function ensureDashboardPages(dashboard: Dashboard): DashboardPage[] {
       filters: dashboard.filters ?? []
     })
   ];
+  return dashboard.pages;
 }
 
 function ensurePageLayout(page: DashboardPage): void {
@@ -1775,14 +1777,22 @@ export async function deleteChart(input: unknown): Promise<Dashboard> {
     throw new Error(`Dashboard '${parsed.dashboardId}' not found.`);
   }
 
-  const initialLength = dashboard.charts.length;
-  dashboard.charts = dashboard.charts.filter((chart) => chart.id !== parsed.chartId);
+  const pages = ensureDashboardPages(dashboard);
+  let removed = false;
 
-  if (dashboard.charts.length === initialLength) {
+  for (const page of pages) {
+    const initialLength = page.charts.length;
+    page.charts = page.charts.filter((chart) => chart.id !== parsed.chartId);
+    if (page.charts.length !== initialLength) {
+      removed = true;
+    }
+    page.layout.items = page.layout.items.filter((item) => item.chart !== parsed.chartId);
+  }
+
+  if (!removed) {
     throw new Error(`Chart '${parsed.chartId}' not found in dashboard '${parsed.dashboardId}'.`);
   }
 
-  dashboard.layout.items = dashboard.layout.items.filter((item) => item.chart !== parsed.chartId);
   touchDashboard(dashboard);
 
   await saveStore(store);
