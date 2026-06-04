@@ -1416,8 +1416,23 @@ function validatePageLayoutChartRefs(page: DashboardPage): void {
   }
 }
 
-function autoPlacePageChart(page: DashboardPage, chartId: string): void {
+function autoPlacePageChart(
+  page: DashboardPage,
+  chartId: string,
+  placement?: { x: number; y: number; w: number; h: number }
+): void {
   ensurePageLayout(page);
+
+  if (placement) {
+    const requiredRows = placement.y + placement.h;
+    if (requiredRows > page.layout.grid.rows) {
+      page.layout.grid.rows = requiredRows;
+    }
+
+    page.layout.items.push({ chart: chartId, ...placement });
+    return;
+  }
+
   const cols = page.layout.grid.columns;
   const chartCount = page.layout.items.length;
   const chart = page.charts.find((entry) => entry.id === chartId);
@@ -1439,6 +1454,25 @@ function autoPlacePageChart(page: DashboardPage, chartId: string): void {
   }
 
   page.layout.items.push({ chart: chartId, x, y, w, h });
+}
+
+function addChartToPrimaryPage(
+  dashboard: Dashboard,
+  chart: Chart,
+  options?: { autoPlace?: boolean; placement?: { x: number; y: number; w: number; h: number } }
+): void {
+  const pages = ensureDashboardPages(dashboard).sort((a, b) => a.pageOrder - b.pageOrder);
+  const primary = pages[0];
+  if (!primary) {
+    throw new Error(`Dashboard '${dashboard.id}' does not have a primary page.`);
+  }
+
+  ensurePageLayout(primary);
+  primary.charts.push(chart);
+  if (options?.autoPlace ?? true) {
+    autoPlacePageChart(primary, chart.id, options?.placement);
+  }
+  dashboard.pages = pages;
 }
 
 function collectDashboardChartIds(dashboard: Dashboard, excludePageId?: string): Set<string> {
@@ -1674,7 +1708,7 @@ export async function addChart(input: unknown): Promise<Dashboard> {
   assertDashboardCapacity(dashboard);
   assertUniqueChart(dashboard, parsed.chart.id);
   assertChartRenderLimits(parsed.chart);
-  dashboard.charts.push(parsed.chart);
+  addChartToPrimaryPage(dashboard, parsed.chart, { autoPlace: false });
   touchDashboard(dashboard);
   validateLayoutChartRefs(dashboard.charts, dashboard.layout);
 
@@ -1692,9 +1726,16 @@ export async function addChartToDashboard(input: unknown): Promise<Dashboard> {
     throw new Error(`Dashboard '${parsed.dashboardId}' not found.`);
   }
 
+  const pages = ensureDashboardPages(dashboard).sort((a, b) => a.pageOrder - b.pageOrder);
+  const primary = pages[0];
+  if (!primary) {
+    throw new Error(`Dashboard '${dashboard.id}' does not have a primary page.`);
+  }
+
   if (parsed.grid) {
-    dashboard.layout.grid = parsed.grid;
-    dashboard.layout.items = dashboard.layout.items.filter(
+    ensurePageLayout(primary);
+    primary.layout.grid = parsed.grid;
+    primary.layout.items = primary.layout.items.filter(
       (item) => item.x + item.w <= parsed.grid!.columns && item.y + item.h <= parsed.grid!.rows
     );
   }
@@ -1702,8 +1743,7 @@ export async function addChartToDashboard(input: unknown): Promise<Dashboard> {
   assertDashboardCapacity(dashboard);
   assertUniqueChart(dashboard, parsed.chart.id);
   assertChartRenderLimits(parsed.chart);
-  dashboard.charts.push(parsed.chart);
-  autoPlaceChart(dashboard, parsed.chart.id, parsed.placement);
+  addChartToPrimaryPage(dashboard, parsed.chart, { placement: parsed.placement });
   touchDashboard(dashboard);
   validateLayoutChartRefs(dashboard.charts, dashboard.layout);
 
@@ -2686,8 +2726,7 @@ export async function addBarChartFromDataset(input: unknown): Promise<Dashboard>
 
   assertDashboardCapacity(dashboard);
   assertChartRenderLimits(chart);
-  dashboard.charts.push(chart);
-  autoPlaceChart(dashboard, chart.id);
+  addChartToPrimaryPage(dashboard, chart);
   touchDashboard(dashboard);
   validateLayoutChartRefs(dashboard.charts, dashboard.layout);
 
@@ -2773,8 +2812,7 @@ export async function addLineChartFromDataset(input: unknown): Promise<Dashboard
 
   assertDashboardCapacity(dashboard);
   assertChartRenderLimits(chart);
-  dashboard.charts.push(chart);
-  autoPlaceChart(dashboard, chart.id);
+  addChartToPrimaryPage(dashboard, chart);
   touchDashboard(dashboard);
   validateLayoutChartRefs(dashboard.charts, dashboard.layout);
 
@@ -2827,8 +2865,7 @@ export async function addDonutChartFromDataset(input: unknown): Promise<Dashboar
 
   assertDashboardCapacity(dashboard);
   assertChartRenderLimits(chart);
-  dashboard.charts.push(chart);
-  autoPlaceChart(dashboard, chart.id);
+  addChartToPrimaryPage(dashboard, chart);
   touchDashboard(dashboard);
   validateLayoutChartRefs(dashboard.charts, dashboard.layout);
 
@@ -2899,8 +2936,7 @@ export async function addMultiBarChartFromDataset(input: unknown): Promise<Dashb
 
   assertDashboardCapacity(dashboard);
   assertChartRenderLimits(chart);
-  dashboard.charts.push(chart);
-  autoPlaceChart(dashboard, chartId);
+  addChartToPrimaryPage(dashboard, chart);
   touchDashboard(dashboard);
   validateLayoutChartRefs(dashboard.charts, dashboard.layout);
   await saveStore(store);
@@ -2985,8 +3021,7 @@ export async function addAreaChartFromDataset(input: unknown): Promise<Dashboard
 
   assertDashboardCapacity(dashboard);
   assertChartRenderLimits(chart);
-  dashboard.charts.push(chart);
-  autoPlaceChart(dashboard, chart.id);
+  addChartToPrimaryPage(dashboard, chart);
   touchDashboard(dashboard);
   validateLayoutChartRefs(dashboard.charts, dashboard.layout);
 
@@ -3048,8 +3083,7 @@ export async function addScatterChartFromDataset(input: unknown): Promise<Dashbo
 
   assertDashboardCapacity(dashboard);
   assertChartRenderLimits(chart);
-  dashboard.charts.push(chart);
-  autoPlaceChart(dashboard, chart.id);
+  addChartToPrimaryPage(dashboard, chart);
   touchDashboard(dashboard);
   validateLayoutChartRefs(dashboard.charts, dashboard.layout);
   await saveStore(store);
@@ -3126,8 +3160,7 @@ export async function addRadarChartFromDataset(input: unknown): Promise<Dashboar
 
   assertDashboardCapacity(dashboard);
   assertChartRenderLimits(chart);
-  dashboard.charts.push(chart);
-  autoPlaceChart(dashboard, chart.id);
+  addChartToPrimaryPage(dashboard, chart);
   touchDashboard(dashboard);
   validateLayoutChartRefs(dashboard.charts, dashboard.layout);
   await saveStore(store);
@@ -3183,8 +3216,7 @@ export async function addFunnelChartFromDataset(input: unknown): Promise<Dashboa
 
   assertDashboardCapacity(dashboard);
   assertChartRenderLimits(chart);
-  dashboard.charts.push(chart);
-  autoPlaceChart(dashboard, chart.id);
+  addChartToPrimaryPage(dashboard, chart);
   touchDashboard(dashboard);
   validateLayoutChartRefs(dashboard.charts, dashboard.layout);
   await saveStore(store);
@@ -3270,8 +3302,7 @@ export async function addKpiCardFromDataset(input: unknown): Promise<Dashboard> 
 
   assertDashboardCapacity(dashboard);
   assertChartRenderLimits(chart);
-  dashboard.charts.push(chart);
-  autoPlaceChart(dashboard, chart.id);
+  addChartToPrimaryPage(dashboard, chart);
   touchDashboard(dashboard);
   validateLayoutChartRefs(dashboard.charts, dashboard.layout);
   await saveStore(store);
@@ -3375,8 +3406,7 @@ export async function addTableChartFromDataset(input: unknown): Promise<Dashboar
 
   assertDashboardCapacity(dashboard);
   assertChartRenderLimits(chart);
-  dashboard.charts.push(chart);
-  autoPlaceChart(dashboard, chart.id);
+  addChartToPrimaryPage(dashboard, chart);
   touchDashboard(dashboard);
   validateLayoutChartRefs(dashboard.charts, dashboard.layout);
   await saveStore(store);
@@ -3542,8 +3572,7 @@ export async function addComboChartFromDataset(input: unknown): Promise<Dashboar
 
   assertDashboardCapacity(dashboard);
   assertChartRenderLimits(chart);
-  dashboard.charts.push(chart);
-  autoPlaceChart(dashboard, chart.id);
+  addChartToPrimaryPage(dashboard, chart);
   touchDashboard(dashboard);
   validateLayoutChartRefs(dashboard.charts, dashboard.layout);
   await saveStore(store);

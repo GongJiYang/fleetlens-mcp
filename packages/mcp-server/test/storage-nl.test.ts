@@ -288,6 +288,80 @@ test("snapshot history keeps up to 10 versions per dashboard and restores latest
   }
 });
 
+test("addBarChartFromDataset syncs dashboard and primary page state", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "luminon-chart-sync-"));
+
+  try {
+    const storage = await loadStorage(tempDir);
+    await storage.ensureUserDataFiles();
+
+    const dashboard = await storage.createDashboard({
+      name: "Dataset Chart Sync",
+      layout: { grid: { columns: 3, rows: 3 }, items: [] }
+    });
+
+    const updated = await storage.addBarChartFromDataset({
+      dashboardId: dashboard.id,
+      datasetId: "default_business",
+      title: "Sales by Country",
+      xField: "country",
+      yField: "sales",
+      aggregation: "sum"
+    });
+
+    assert.equal(updated.charts.length, 1);
+    assert.equal(updated.layout.items.length, 1);
+
+    const pages = await storage.listDashboardPages({ dashboardId: dashboard.id });
+    assert.equal(pages[0]?.charts.length, 1);
+    assert.equal(pages[0]?.layout.items.length, 1);
+    assert.equal(pages[0]?.charts[0]?.title, "Sales by Country");
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+    delete process.env.MCP_DATA_DIR;
+  }
+});
+
+test("addChartToDashboard syncs dashboard and primary page state", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "luminon-add-chart-sync-"));
+
+  try {
+    const storage = await loadStorage(tempDir);
+    await storage.ensureUserDataFiles();
+
+    const seeded = await storage.listDashboards();
+    const seedDashboard = seeded.find((dashboard) => (dashboard.pages?.[0]?.charts?.length ?? dashboard.charts.length) > 0);
+    assert.ok(seedDashboard, "Expected a seeded dashboard with at least one chart");
+
+    const seedPages = await storage.listDashboardPages({ dashboardId: seedDashboard.id });
+    const seedChart = structuredClone(seedPages[0]?.charts[0]);
+    assert.ok(seedChart, "Expected a seeded chart to clone");
+    seedChart.id = "chart_sync_test";
+
+    const dashboard = await storage.createDashboard({
+      name: "Manual Chart Sync",
+      layout: { grid: { columns: 3, rows: 3 }, items: [] }
+    });
+
+    const updated = await storage.addChartToDashboard({
+      dashboardId: dashboard.id,
+      chart: seedChart,
+      placement: { x: 0, y: 0, w: 1, h: 1 }
+    });
+
+    assert.equal(updated.charts.length, 1);
+    assert.equal(updated.layout.items.length, 1);
+
+    const pages = await storage.listDashboardPages({ dashboardId: dashboard.id });
+    assert.equal(pages[0]?.charts.length, 1);
+    assert.equal(pages[0]?.layout.items.length, 1);
+    assert.equal(pages[0]?.charts[0]?.id, "chart_sync_test");
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+    delete process.env.MCP_DATA_DIR;
+  }
+});
+
 test("deleteChart removes charts from dashboard pages and updates counts", async () => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "luminon-delete-chart-"));
 
