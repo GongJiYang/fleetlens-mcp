@@ -1561,6 +1561,22 @@ function findDashboardPageByExactNameOrSlug(pages: DashboardPage[], selector?: s
   return pages.find((page) => page.name.trim().toLowerCase() === lower || page.slug.trim().toLowerCase() === lower);
 }
 
+function cloneDashboardFilters(filters: DashboardFilter[] = []): DashboardFilter[] {
+  return filters.map((filter) => dashboardFilterSchema.parse(structuredClone(filter)));
+}
+
+function setPrimaryPageFilters(dashboard: Dashboard, filters: DashboardFilter[]): void {
+  const pages = ensureDashboardPages(dashboard).sort((a, b) => a.pageOrder - b.pageOrder);
+  const primary = pages[0];
+  if (!primary) {
+    throw new Error(`Dashboard '${dashboard.id}' does not have a primary page.`);
+  }
+
+  primary.filters = cloneDashboardFilters(filters);
+  dashboard.pages = pages;
+  dashboard.filters = primary.filters;
+}
+
 function isBlankDefaultPage(page: DashboardPage): boolean {
   return (
     page.id === "page_main" &&
@@ -1596,6 +1612,26 @@ function findChartOnDashboard(
   return undefined;
 }
 
+function updateChartOnDashboard(
+  dashboard: Dashboard,
+  chartId: string,
+  updater: (chart: Chart) => void
+): void {
+  const updatedIds = new Set<string>();
+
+  for (const page of ensureDashboardPages(dashboard)) {
+    const chart = page.charts.find((entry) => entry.id === chartId);
+    if (!chart) continue;
+    updater(chart);
+    updatedIds.add(chart.id);
+  }
+
+  const rootChart = dashboard.charts.find((entry) => entry.id === chartId);
+  if (rootChart && !updatedIds.has(rootChart.id)) {
+    updater(rootChart);
+  }
+}
+
 function clonePageContentWithNewChartIds(
   page: DashboardPage,
   existingChartIds: Set<string>
@@ -1628,6 +1664,9 @@ function clonePageContentWithNewChartIds(
 function syncDashboardPrimaryPage(dashboard: Dashboard): void {
   const pages = ensureDashboardPages(dashboard).sort((a, b) => a.pageOrder - b.pageOrder);
   const primary = pages[0];
+  if ((primary.filters?.length ?? 0) === 0 && (dashboard.filters?.length ?? 0) > 0) {
+    primary.filters = cloneDashboardFilters(dashboard.filters);
+  }
   dashboard.pages = pages;
   dashboard.charts = primary.charts;
   dashboard.layout = primary.layout;
@@ -1925,7 +1964,10 @@ export async function setChartTheme(input: unknown): Promise<Dashboard> {
     throw new Error(`Chart '${parsed.chartId}' not found in dashboard '${parsed.dashboardId}'.`);
   }
 
-  chart.themePreset = themePresetSchema.parse(parsed.themePreset);
+  const themePreset = themePresetSchema.parse(parsed.themePreset);
+  updateChartOnDashboard(dashboard, chart.id, (entry) => {
+    entry.themePreset = themePreset;
+  });
   touchDashboard(dashboard);
   await saveStore(store);
   await snapshotDashboard(dashboard, "auto-snapshot:set_chart_theme");
@@ -1945,7 +1987,9 @@ export async function setChartPresentation(input: unknown): Promise<Dashboard> {
     throw new Error(`Chart '${parsed.chartId}' not found in dashboard '${parsed.dashboardId}'.`);
   }
 
-  chart.presentation = mergePresentation(chart.presentation, parsed.presentation);
+  updateChartOnDashboard(dashboard, chart.id, (entry) => {
+    entry.presentation = mergePresentation(entry.presentation, parsed.presentation);
+  });
   touchDashboard(dashboard);
   await saveStore(store);
   await snapshotDashboard(dashboard, "auto-snapshot:set_chart_presentation");
@@ -1965,7 +2009,9 @@ export async function resetChartPresentation(input: unknown): Promise<Dashboard>
     throw new Error(`Chart '${parsed.chartId}' not found in dashboard '${parsed.dashboardId}'.`);
   }
 
-  delete chart.presentation;
+  updateChartOnDashboard(dashboard, chart.id, (entry) => {
+    delete entry.presentation;
+  });
   touchDashboard(dashboard);
   await saveStore(store);
   return dashboard;
@@ -3756,6 +3802,75 @@ function stripTrailingSentencePunctuation(value: string): string {
   return value.trim().replace(/[\s,.;:!?]+$/g, "").trim();
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function extractTargetSegment(
+  request: string,
+  targetPattern: RegExp,
+  nextTargetPattern?: RegExp
+): string | undefined {
+  const targetMatch = request.match(targetPattern);
+  if (!targetMatch || targetMatch.index === undefined) return undefined;
+
+  const afterTarget = request.slice(targetMatch.index);
+  if (!nextTargetPattern) return afterTarget;
+
+  const nextMatch = afterTarget.match(nextTargetPattern);
+  if (!nextMatch || nextMatch.index === undefined) return afterTarget;
+
+  return afterTarget.slice(0, nextMatch.index);
+}
+
+function inferThemePresetForTarget(
+  request: string,
+  targetPattern: RegExp,
+  nextTargetPattern?: RegExp
+): ThemePreset | undefined {
+  const segment = extractTargetSegment(request, targetPattern, nextTargetPattern);
+  return segment ? inferThemePreset(segment) : undefined;
+}
+
+function extractChartSelectorFromRequest(request: string): string | undefined {
+  const chartQuotedMatch = request.match(/(?:chart|gr[aá]fica|visual|serie)\s+["'`]+([^"'`]+?)["'`]+/i);
+  if (chartQuotedMatch?.[1]) {
+    return stripTrailingSentencePunctuation(stripWrappingQuotes(chartQuotedMatch[1]));
+  }
+
+  const chartMatch = request.match(
+    /(?:chart|gr[aá]fica|visual|serie)\s+([^,;]+?)(?:\s+(?:to|al?|a|en)\s+(?:theme|tema)\b|$)/i
+  );
+  if (chartMatch?.[1]) {
+    return stripTrailingSentencePunctuation(stripWrappingQuotes(chartMatch[1]));
+  }
+
+  return undefined;
+}
+
+function inferRequestedDashboardFilterFields(request: string, columns: string[]): string[] {
+  const normalizedRequest = request.toLowerCase();
+  const quotedTokens = Array.from(request.matchAll(/["'`]{1}([^"'`]+?)["'`]{1}/g))
+    .map((match) => stripWrappingQuotes(match[1] ?? "").trim().toLowerCase())
+    .filter((value) => value.length > 0);
+
+  const matches = new Set<string>();
+  for (const column of columns) {
+    const normalizedColumn = column.trim().toLowerCase();
+    if (!normalizedColumn) continue;
+    if (quotedTokens.includes(normalizedColumn)) {
+      matches.add(column);
+      continue;
+    }
+    const boundaryPattern = new RegExp(`(^|[^a-z0-9_])${escapeRegExp(normalizedColumn)}([^a-z0-9_]|$)`, "i");
+    if (boundaryPattern.test(normalizedRequest)) {
+      matches.add(column);
+    }
+  }
+
+  return columns.filter((column) => matches.has(column));
+}
+
 type ImportDashboardClause = {
   sourceDashboardName: string;
   targetDashboardName?: string;
@@ -3916,6 +4031,142 @@ export async function dashboardNl(input: unknown): Promise<{
       action: "list_theme_presets",
       message: "Available themes.",
       result: themes
+    };
+  }
+
+  if (/(filtro|filters?|filtros?)/.test(request)) {
+    const dashboardCandidate =
+      parsed.dashboardName ??
+      extractDashboardNameFromRequest(parsed.request) ??
+      parsed.request.match(/(?:dashboard|tablero)\s+["'`]?([^"'`]+?)["'`]?(?:\s|$)/i)?.[1];
+    const dashboardName = dashboardCandidate ? stripWrappingQuotes(dashboardCandidate).trim() : "";
+    const dashboardId = parsed.dashboardId ?? (dashboardName ? (await findDashboardByName(dashboardName))?.id : undefined);
+    const activeDashboardId = dashboardId ?? (await resolveDefaultDashboard(undefined));
+    const dashboard = (await listDashboards()).find((entry) => entry.id === activeDashboardId);
+    if (!dashboard) {
+      throw new Error(`Dashboard '${activeDashboardId}' not found.`);
+    }
+
+    const datasetId = (() => {
+      for (const page of ensureDashboardPages(dashboard)) {
+        for (const chart of page.charts) {
+          const candidate = chart.datasetId ?? chart.source?.datasetId;
+          if (candidate) return candidate;
+        }
+      }
+      return undefined;
+    })();
+    if (!datasetId) {
+      throw new Error("Could not infer dataset for dashboard filters.");
+    }
+
+    const dataset = (await listDatasets()).find((entry) => entry.id === datasetId);
+    if (!dataset) {
+      throw new Error(`Dataset '${datasetId}' not found.`);
+    }
+
+    const fields = inferRequestedDashboardFilterFields(parsed.request, dataset.columns);
+    const selectedFields = fields.length > 0 ? fields : dataset.columns.slice(0, 4);
+    const existingRows = dataset.rows ?? [];
+    const additions = selectedFields.map((field) => {
+      const sampleValue = existingRows.find((row) => row[field] !== undefined && row[field] !== null && row[field] !== "")?.[field];
+      return {
+        field,
+        fieldType: typeof sampleValue === "number" ? "number" : "string",
+        op: "in" as const,
+        value: ""
+      };
+    });
+
+    const updated = await updateDashboardFilters({
+      dashboardId: activeDashboardId,
+      add: additions
+    });
+    return {
+      action: "update_dashboard_filters",
+      message: "Dashboard filters updated.",
+      result: updated
+    };
+  }
+
+  if (/(tema|theme|estilo|preset)/.test(request)) {
+    const hasDashboardTarget = /(?:dashboard|tablero)/i.test(request);
+    const hasChartTarget = /(?:chart|gr[aá]fica|visual|serie)/i.test(request);
+
+    const dashboardTheme = inferThemePresetForTarget(
+      parsed.request,
+      /(?:dashboard|tablero)/i,
+      /(?:chart|gr[aá]fica|visual|serie)/i
+    );
+    const chartTheme = inferThemePresetForTarget(parsed.request, /(?:chart|gr[aá]fica|visual|serie)/i);
+
+    if (hasDashboardTarget && hasChartTarget && (dashboardTheme || chartTheme)) {
+      const activeDashboardId = await resolveDefaultDashboard(parsed.dashboardId);
+      let dashboard = (await listDashboards()).find((entry) => entry.id === activeDashboardId);
+      if (!dashboard) {
+        throw new Error(`Dashboard '${activeDashboardId}' not found.`);
+      }
+
+      if (dashboardTheme) {
+        dashboard = await setDashboardTheme({ dashboardId: activeDashboardId, themePreset: dashboardTheme });
+      }
+
+      if (chartTheme) {
+        const chartSelector = extractChartSelectorFromRequest(parsed.request);
+        if (!chartSelector) {
+          throw new Error("Could not infer the chart to theme. Use the chart title explicitly.");
+        }
+        const chartLocation = findChartOnDashboard(dashboard, chartSelector);
+        if (!chartLocation) {
+          throw new Error(`Could not resolve chart '${chartSelector}' in dashboard '${activeDashboardId}'.`);
+        }
+        dashboard = await setChartTheme({
+          dashboardId: activeDashboardId,
+          chartId: chartLocation.chart.id,
+          themePreset: chartTheme
+        });
+      }
+
+      return {
+        action: "set_dashboard_and_chart_theme",
+        message: "Dashboard and chart themes updated.",
+        result: dashboard
+      };
+    }
+
+    const theme = inferThemePreset(parsed.request);
+    if (!theme) {
+      throw new Error("Could not infer theme preset. Try: clean, business, dark_analytics, pastel, high_contrast.");
+    }
+
+    const chartSelector = extractChartSelectorFromRequest(parsed.request);
+    if (chartSelector) {
+      const activeDashboardId = await resolveDefaultDashboard(parsed.dashboardId);
+      const dashboard = (await listDashboards()).find((entry) => entry.id === activeDashboardId);
+      if (!dashboard) {
+        throw new Error(`Dashboard '${activeDashboardId}' not found.`);
+      }
+      const chartLocation = findChartOnDashboard(dashboard, chartSelector);
+      if (chartLocation) {
+        const updated = await setChartTheme({
+          dashboardId: activeDashboardId,
+          chartId: chartLocation.chart.id,
+          themePreset: theme
+        });
+        return {
+          action: "set_chart_theme",
+          message: `Theme '${theme}' applied to chart '${chartLocation.chart.title ?? chartLocation.chart.id}'.`,
+          result: updated
+        };
+      }
+    }
+
+    const activeDashboardId = await resolveDefaultDashboard(parsed.dashboardId);
+    const dashboard = await setDashboardTheme({ dashboardId: activeDashboardId, themePreset: theme });
+    return {
+      action: "set_dashboard_theme",
+      message: "Dashboard theme updated.",
+      result: dashboard
     };
   }
 
@@ -4772,6 +5023,7 @@ export async function addDashboardFilter(raw: unknown): Promise<Dashboard> {
     filters: [...(dashboard.filters ?? []), newFilter],
     updatedAt: new Date().toISOString()
   });
+  setPrimaryPageFilters(updated, updated.filters ?? []);
   store.dashboards[idx] = updated;
   await saveStore(store);
   await snapshotDashboard(updated, "auto-snapshot:add_filter");
@@ -4789,6 +5041,7 @@ export async function removeDashboardFilter(raw: unknown): Promise<Dashboard> {
     filters: (dashboard.filters ?? []).filter((f: DashboardFilter) => f.id !== input.filterId),
     updatedAt: new Date().toISOString()
   });
+  setPrimaryPageFilters(updated, updated.filters ?? []);
   store.dashboards[idx] = updated;
   await saveStore(store);
   await snapshotDashboard(updated, "auto-snapshot:remove_filter");
@@ -4822,6 +5075,7 @@ export async function updateDashboardFilters(raw: unknown): Promise<Dashboard> {
     filters: [...remaining, ...additions],
     updatedAt: new Date().toISOString()
   });
+  setPrimaryPageFilters(updated, updated.filters ?? []);
 
   const idx = store.dashboards.findIndex((d) => d.id === dashboard.id);
   store.dashboards[idx] = updated;

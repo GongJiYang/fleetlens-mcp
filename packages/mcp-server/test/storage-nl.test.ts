@@ -72,6 +72,161 @@ test("dashboard_nl handles folders, groups, pages and dashboard move flows", asy
   }
 });
 
+test("dashboard_nl maps global filter requests to update_dashboard_filters", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "luminon-nl-filters-"));
+
+  try {
+    const storage = await loadStorage(tempDir);
+    await storage.ensureUserDataFiles();
+
+    const dataset = await storage.registerDataset({
+      name: "retail-analytics",
+      rows: [
+        { year: 2024, month: "January", country: "USA", category: "Electronics", revenue: 100 },
+        { year: 2025, month: "February", country: "Canada", category: "Home", revenue: 120 }
+      ]
+    });
+
+    const dashboard = await storage.createDashboard({
+      name: "Retail Analytics Overview",
+      layout: { grid: { columns: 3, rows: 3 }, items: [] }
+    });
+
+    await storage.createChartFromDataset({
+      type: "bar",
+      dashboardId: dashboard.id,
+      datasetId: dataset.id,
+      xField: "country",
+      yField: "revenue",
+      aggregation: "sum",
+      title: "Revenue by Country"
+    });
+
+    const result = await storage.dashboardNl({
+      dashboardId: dashboard.id,
+      request:
+        "Agrega filtros globales al dashboard `Retail Analytics Overview` para `Year`, `Month`, `Country` y `Category`. Los filtros deben poder combinarse entre sí en cualquier orden y deben actualizar y recalcular los valores de las otras charts."
+    });
+
+    assert.equal(result.action, "update_dashboard_filters");
+
+    const filters = await storage.listDashboardFilters({ dashboardId: dashboard.id });
+    assert.equal(filters.filters.length, 4);
+    assert.deepEqual(
+      filters.filters.map((filter: { field: string; value: string | number | Array<string | number> }) => ({
+        field: filter.field,
+        value: filter.value
+      })),
+      [
+        { field: "year", value: "" },
+        { field: "month", value: "" },
+        { field: "country", value: "" },
+        { field: "category", value: "" }
+      ]
+    );
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+    delete process.env.MCP_DATA_DIR;
+  }
+});
+
+test("dashboard_nl maps chart theme requests to set_chart_theme", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "luminon-nl-chart-theme-"));
+
+  try {
+    const storage = await loadStorage(tempDir);
+    await storage.ensureUserDataFiles();
+
+    const dataset = await storage.registerDataset({
+      name: "retail-analytics",
+      rows: [
+        { year: 2024, month: "January", country: "USA", category: "Electronics", revenue: 100 },
+        { year: 2025, month: "February", country: "Canada", category: "Home", revenue: 120 }
+      ]
+    });
+
+    const dashboard = await storage.createDashboard({
+      name: "Retail Analytics Overview",
+      layout: { grid: { columns: 3, rows: 3 }, items: [] }
+    });
+
+    await storage.createChartFromDataset({
+      type: "bar",
+      dashboardId: dashboard.id,
+      datasetId: dataset.id,
+      xField: "country",
+      yField: "revenue",
+      aggregation: "sum",
+      title: "Revenue by Country"
+    });
+
+    const result = await storage.dashboardNl({
+      dashboardId: dashboard.id,
+      request: "Cambia la chart 'Revenue by Country' al tema textured"
+    });
+
+    assert.equal(result.action, "set_chart_theme");
+
+    const refreshed = await storage.listDashboardPages({ dashboardId: dashboard.id });
+    const chart = refreshed[0]?.charts.find((entry: { title?: string }) => entry.title === "Revenue by Country");
+    assert.ok(chart);
+    assert.equal(chart.themePreset, "textured");
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+    delete process.env.MCP_DATA_DIR;
+  }
+});
+
+test("dashboard_nl maps mixed dashboard and chart theme requests", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "luminon-nl-mixed-theme-"));
+
+  try {
+    const storage = await loadStorage(tempDir);
+    await storage.ensureUserDataFiles();
+
+    const dataset = await storage.registerDataset({
+      name: "retail-analytics",
+      rows: [
+        { year: 2024, month: "January", country: "USA", category: "Electronics", revenue: 100 },
+        { year: 2025, month: "February", country: "Canada", category: "Home", revenue: 120 }
+      ]
+    });
+
+    const dashboard = await storage.createDashboard({
+      name: "Retail Analytics Overview",
+      layout: { grid: { columns: 3, rows: 3 }, items: [] }
+    });
+
+    await storage.createChartFromDataset({
+      type: "bar",
+      dashboardId: dashboard.id,
+      datasetId: dataset.id,
+      xField: "country",
+      yField: "revenue",
+      aggregation: "sum",
+      title: "Revenue by Category"
+    });
+
+    const result = await storage.dashboardNl({
+      dashboardId: dashboard.id,
+      request: 'cambia el dashboard "Retail Analytics Overview" al tema clean y la chart "Revenue by Category" a dark_analytics'
+    });
+
+    assert.equal(result.action, "set_dashboard_and_chart_theme");
+
+    const refreshed = await storage.listDashboards();
+    const updated = refreshed.find((entry) => entry.id === dashboard.id);
+    assert.ok(updated);
+    assert.equal(updated?.themePreset, "clean");
+    const chart = updated?.pages?.[0]?.charts.find((entry: { title?: string }) => entry.title === "Revenue by Category");
+    assert.ok(chart);
+    assert.equal(chart?.themePreset, "dark_analytics");
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+    delete process.env.MCP_DATA_DIR;
+  }
+});
+
 test("page move/copy/import tools work across dashboards and pages", async () => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "luminon-pages-"));
 
