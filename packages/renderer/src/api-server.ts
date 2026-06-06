@@ -541,11 +541,6 @@ app.get("/api/dashboards/:id", async (req, res) => {
     return;
   }
 
-  if (!dashboard.published) {
-    res.status(404).json({ error: "Dashboard is not published" });
-    return;
-  }
-
   res.json({ dashboard });
 });
 

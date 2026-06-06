@@ -672,16 +672,10 @@ function useDatasets() {
 }
 
 function countUniqueDatasets(dashboard: Dashboard): number {
-  const datasetIds = new Set<string>();
   const charts = dashboard.pages?.length
     ? dashboard.pages.flatMap((page) => page.charts ?? [])
     : dashboard.charts;
-  for (const chart of charts) {
-    if ('datasetId' in chart && chart.datasetId) {
-      datasetIds.add(chart.datasetId);
-    }
-  }
-  return datasetIds.size;
+  return collectDatasetIds(charts).size;
 }
 
 function countDashboardCharts(dashboard: Dashboard): number {
@@ -3087,7 +3081,6 @@ function App() {
       setSavingName(false);
     }
   }
-
 
   async function loadShareLinks(dashboardId: string) {
     setShareLoading(true);

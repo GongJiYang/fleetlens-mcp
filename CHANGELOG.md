@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.24 - 2026-06-06
+
+- Hardened dashboard and store writes to reduce state desynchronization and make mutations safer across the renderer and MCP flows.
+- Fixed chart state synchronization issues, including cases where chart updates or deletions could be lost after page-level sync.
+- Fixed the npm MCP launcher and stabilized the 0.9.22-0.9.24 release line around more reliable local package execution.
+
 ## 0.9.1 - 2026-05-21
 
 - Hardened seed reconciliation so user-edited demo dashboards are preserved across updates instead of being overwritten by repo seeds.

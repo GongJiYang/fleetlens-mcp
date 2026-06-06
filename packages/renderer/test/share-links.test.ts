@@ -144,6 +144,40 @@ test("share links support passcode create/read/rotate/remove and revoke", async 
   }
 });
 
+test("dashboard id endpoint is accessible regardless of publish state", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "luminon-publish-"));
+  const port = 5198;
+  const baseUrl = `http://127.0.0.1:${port}`;
+  const child = await startRenderer(tempDir, port, 20);
+  const stderrChunks: string[] = [];
+  child.stderr.on("data", (chunk) => {
+    stderrChunks.push(String(chunk));
+  });
+
+  try {
+    await waitForHealth(baseUrl, child, stderrChunks);
+
+    const dashboardsRes = await fetch(`${baseUrl}/api/dashboards`);
+    assert.equal(dashboardsRes.status, 200);
+    const dashboardsPayload = await dashboardsRes.json() as { dashboards: Array<{ id: string; published?: boolean }> };
+    assert.ok(dashboardsPayload.dashboards.length > 0);
+    const dashboard = dashboardsPayload.dashboards[0]!;
+
+    const unpublishRes = await fetch(`${baseUrl}/api/dashboards/${encodeURIComponent(dashboard.id)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ published: false })
+    });
+    assert.equal(unpublishRes.status, 200);
+
+    const privateDashboardRes = await fetch(`${baseUrl}/api/dashboards/${encodeURIComponent(dashboard.id)}`);
+    assert.equal(privateDashboardRes.status, 200);
+  } finally {
+    await stopProcess(child);
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("share endpoint enforces rate limit", async () => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "luminon-rate-"));
   const port = 5198;

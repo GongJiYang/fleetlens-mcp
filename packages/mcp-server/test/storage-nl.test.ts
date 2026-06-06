@@ -227,6 +227,99 @@ test("dashboard_nl maps mixed dashboard and chart theme requests", async () => {
   }
 });
 
+test("dashboard_nl maps explicit layout requests to set_layout and keeps one-row chart heights", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "luminon-nl-layout-"));
+
+  try {
+    const storage = await loadStorage(tempDir);
+    await storage.ensureUserDataFiles();
+
+    const dataset = await storage.registerDataset({
+      name: "retail-analytics",
+      rows: [
+        { month: "January", country: "USA", category: "Electronics", revenue: 100 },
+        { month: "February", country: "Canada", category: "Home", revenue: 120 }
+      ]
+    });
+
+    const dashboard = await storage.createDashboard({
+      name: "Retail Analytics Overview",
+      layout: { grid: { columns: 3, rows: 3 }, items: [] }
+    });
+
+    await storage.createChartFromDataset({
+      type: "bar",
+      dashboardId: dashboard.id,
+      datasetId: dataset.id,
+      xField: "category",
+      yField: "revenue",
+      aggregation: "sum",
+      title: "Revenue by Category"
+    });
+    await storage.createChartFromDataset({
+      type: "donut",
+      dashboardId: dashboard.id,
+      datasetId: dataset.id,
+      categoryField: "country",
+      valueField: "revenue",
+      aggregation: "sum",
+      title: "Revenue Share"
+    });
+    await storage.createChartFromDataset({
+      type: "kpi_card",
+      dashboardId: dashboard.id,
+      datasetId: dataset.id,
+      valueField: "revenue",
+      aggregation: "sum",
+      title: "Total Revenue",
+      label: "Total Revenue"
+    });
+    await storage.createChartFromDataset({
+      type: "line",
+      dashboardId: dashboard.id,
+      datasetId: dataset.id,
+      xField: "month",
+      yField: "revenue",
+      aggregation: "sum",
+      title: "Monthly Revenue"
+    });
+
+    const result = await storage.dashboardNl({
+      dashboardId: dashboard.id,
+      request:
+        "Ajusta Retail Analytics Overview a 3 columnas: Revenue by Category a la izquierda y ocupa 2 columna. Revenue Share a la derecha y ocupa 1 columna. Total Revenue debajo a la izquierda y ocupa 1. Todas las charts ocupan solo una fila."
+    });
+
+    assert.equal(result.action, "set_layout");
+
+    const pages = await storage.listDashboardPages({ dashboardId: dashboard.id });
+    const primary = pages[0];
+    assert.ok(primary);
+    assert.equal(primary.layout.grid.columns, 3);
+    assert.equal(primary.layout.grid.rows, 2);
+
+    const byTitle = new Map(
+      primary.layout.items.map((item: { chart: string; x: number; y: number; w: number; h: number }) => [
+        primary.charts.find((chart: { id: string; title?: string }) => chart.id === item.chart)?.title,
+        item
+      ])
+    );
+    assert.deepEqual(byTitle.get("Revenue by Category"), { chart: byTitle.get("Revenue by Category")?.chart, x: 0, y: 0, w: 2, h: 1 });
+    assert.deepEqual(byTitle.get("Revenue Share"), { chart: byTitle.get("Revenue Share")?.chart, x: 2, y: 0, w: 1, h: 1 });
+    assert.deepEqual(byTitle.get("Total Revenue"), { chart: byTitle.get("Total Revenue")?.chart, x: 0, y: 1, w: 1, h: 1 });
+    assert.deepEqual(byTitle.get("Monthly Revenue"), { chart: byTitle.get("Monthly Revenue")?.chart, x: 1, y: 1, w: 2, h: 1 });
+
+    const dashboards = await storage.listDashboards();
+    const updated = dashboards.find((entry) => entry.id === dashboard.id);
+    assert.ok(updated);
+    assert.equal(updated?.layout.grid.rows, 2);
+    assert.deepEqual(updated?.pages?.[0]?.layout, updated?.layout);
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+    delete process.env.MCP_DATA_DIR;
+  }
+});
+
 test("page move/copy/import tools work across dashboards and pages", async () => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "luminon-pages-"));
 

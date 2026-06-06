@@ -1565,6 +1565,14 @@ function cloneDashboardFilters(filters: DashboardFilter[] = []): DashboardFilter
   return filters.map((filter) => dashboardFilterSchema.parse(structuredClone(filter)));
 }
 
+function cloneLayout(layout: Dashboard["layout"]): Dashboard["layout"] {
+  return layoutSchema.parse(structuredClone(layout));
+}
+
+function computeRequiredGridRows(items: Dashboard["layout"]["items"]): number {
+  return Math.max(1, items.reduce((max, item) => Math.max(max, item.y + item.h), 0));
+}
+
 function setPrimaryPageFilters(dashboard: Dashboard, filters: DashboardFilter[]): void {
   const pages = ensureDashboardPages(dashboard).sort((a, b) => a.pageOrder - b.pageOrder);
   const primary = pages[0];
@@ -1575,6 +1583,21 @@ function setPrimaryPageFilters(dashboard: Dashboard, filters: DashboardFilter[])
   primary.filters = cloneDashboardFilters(filters);
   dashboard.pages = pages;
   dashboard.filters = primary.filters;
+}
+
+function setPrimaryPageLayout(dashboard: Dashboard, layout: Dashboard["layout"]): void {
+  const pages = ensureDashboardPages(dashboard).sort((a, b) => a.pageOrder - b.pageOrder);
+  const primary = pages[0];
+  if (!primary) {
+    throw new Error(`Dashboard '${dashboard.id}' does not have a primary page.`);
+  }
+
+  const nextLayout = cloneLayout(layout);
+  nextLayout.grid.rows = Math.max(nextLayout.grid.rows, computeRequiredGridRows(nextLayout.items));
+  validatePageLayoutChartRefs({ ...primary, layout: nextLayout });
+  primary.layout = nextLayout;
+  dashboard.pages = pages;
+  dashboard.layout = primary.layout;
 }
 
 function isBlankDefaultPage(page: DashboardPage): boolean {
@@ -1801,7 +1824,7 @@ export async function setLayout(input: unknown): Promise<Dashboard> {
   }
 
   validateLayoutChartRefs(dashboard.charts, parsed.layout);
-  dashboard.layout = parsed.layout;
+  setPrimaryPageLayout(dashboard, parsed.layout);
   touchDashboard(dashboard);
 
   await saveStore(store);
@@ -1823,12 +1846,14 @@ export async function updateDashboard(raw: unknown): Promise<Dashboard> {
   if (input.presentation) {
     dashboard.presentation = { ...(dashboard.presentation ?? {}), ...input.presentation };
   }
-  if (input.columns) {
-    dashboard.layout.grid.columns = input.columns;
-  }
-  if (input.layout) {
-    dashboard.layout = layoutSchema.parse(input.layout);
-    validateLayoutChartRefs(dashboard.charts, dashboard.layout);
+  if (input.columns || input.layout) {
+    const nextLayout = cloneLayout(input.layout ? layoutSchema.parse(input.layout) : dashboard.layout);
+    if (input.columns) {
+      nextLayout.grid.columns = input.columns;
+      nextLayout.grid.rows = Math.max(nextLayout.grid.rows, computeRequiredGridRows(nextLayout.items));
+    }
+    validateLayoutChartRefs(dashboard.charts, nextLayout);
+    setPrimaryPageLayout(dashboard, nextLayout);
   }
 
   touchDashboard(dashboard);
@@ -2104,7 +2129,8 @@ export async function setDashboardSubtitle(input: unknown): Promise<Dashboard> {
 function buildBalancedLayout(
   charts: Chart[],
   columns: number,
-  widthOverrides?: Map<string, number>
+  widthOverrides?: Map<string, number>,
+  heightOverrides?: Map<string, number>
 ): Dashboard["layout"]["items"] {
   if (charts.length === 0) return [];
 
@@ -2124,11 +2150,11 @@ function buildBalancedLayout(
 
   for (const chart of charts) {
     const w = clampWidth(widthForChart(chart));
-    const h = 2;
+    const h = Math.max(1, heightOverrides?.get(chart.id) ?? 2);
 
     // wrap to next row if not enough space
     if (col + w > columns) {
-      rowY += rowHeight || 2;
+      rowY += rowHeight || 1;
       col = 0;
       rowHeight = 0;
     }
@@ -2138,12 +2164,7 @@ function buildBalancedLayout(
     rowHeight = Math.max(rowHeight, h);
   }
 
-  // finalize grid height
-  const lastRowHeight = rowHeight || 2;
-  const rows = rowY + lastRowHeight;
-  // adjust layout grid.rows elsewhere after this builder
-
-  return items.map((item) => ({ ...item, h: 2 }));
+  return items;
 }
 
 export async function autoLayoutDashboard(input: unknown): Promise<Dashboard> {
@@ -2156,14 +2177,18 @@ export async function autoLayoutDashboard(input: unknown): Promise<Dashboard> {
   }
 
   const widthOverrides = new Map<string, number>();
+  const heightOverrides = new Map<string, number>();
   for (const item of dashboard.layout.items) {
     if (item.w > 0) widthOverrides.set(item.chart, item.w);
+    if (item.h > 0) heightOverrides.set(item.chart, item.h);
   }
 
   const columns = dashboard.layout.grid.columns > 0 ? dashboard.layout.grid.columns : 3;
-  dashboard.layout.items = buildBalancedLayout(dashboard.charts, columns, widthOverrides);
-  const maxBottom = dashboard.layout.items.reduce((acc, item) => Math.max(acc, item.y + item.h), 0);
-  dashboard.layout.grid.rows = Math.max(3, maxBottom);
+  const nextLayout = cloneLayout(dashboard.layout);
+  nextLayout.grid.columns = columns;
+  nextLayout.items = buildBalancedLayout(dashboard.charts, columns, widthOverrides, heightOverrides);
+  nextLayout.grid.rows = computeRequiredGridRows(nextLayout.items);
+  setPrimaryPageLayout(dashboard, nextLayout);
   touchDashboard(dashboard);
 
   validateLayoutChartRefs(dashboard.charts, dashboard.layout);
@@ -2182,12 +2207,16 @@ export async function setDashboardColumns(input: unknown): Promise<Dashboard> {
 
   dashboard.layout.grid.columns = parsed.columns;
   const widthOverrides = new Map<string, number>();
+  const heightOverrides = new Map<string, number>();
   for (const item of dashboard.layout.items) {
     if (item.w > 0) widthOverrides.set(item.chart, item.w);
+    if (item.h > 0) heightOverrides.set(item.chart, item.h);
   }
-  dashboard.layout.items = buildBalancedLayout(dashboard.charts, parsed.columns, widthOverrides);
-  const maxBottom = dashboard.layout.items.reduce((acc, item) => Math.max(acc, item.y + item.h), 0);
-  dashboard.layout.grid.rows = Math.max(3, maxBottom);
+  const nextLayout = cloneLayout(dashboard.layout);
+  nextLayout.grid.columns = parsed.columns;
+  nextLayout.items = buildBalancedLayout(dashboard.charts, parsed.columns, widthOverrides, heightOverrides);
+  nextLayout.grid.rows = computeRequiredGridRows(nextLayout.items);
+  setPrimaryPageLayout(dashboard, nextLayout);
   touchDashboard(dashboard);
 
   validateLayoutChartRefs(dashboard.charts, dashboard.layout);
@@ -3739,6 +3768,130 @@ function extractDashboardNameFromRequest(request: string): string | undefined {
   return undefined;
 }
 
+function inferChartLayoutFromRequest(dashboard: Dashboard, request: string): Dashboard["layout"] | undefined {
+  const lower = request.toLowerCase();
+  const match =
+    request.match(/(\d+)\s*column(s)?/i) ??
+    request.match(/(\d+)\s*columna(s)?/i);
+  const columns = Number(match?.[1] ?? 0);
+  if (!columns || Number.isNaN(columns)) return undefined;
+
+  const wantsSingleRowHeight =
+    /(todas?\s+las?\s+charts?.*(solo\s+)?una\s+fila|all\s+charts?.*(only\s+)?one\s+row)/i.test(request);
+  const currentItems = new Map(dashboard.layout.items.map((item) => [item.chart, item]));
+  const clauses = request
+    .split(/[\n.;:]+/)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+
+  const items = new Map<string, Dashboard["layout"]["items"][number]>();
+  const mentionedChartIds = new Set<string>();
+  for (const clause of clauses) {
+    const clauseLower = clause.toLowerCase();
+    const entry = dashboard.charts.find((chart) => {
+      const title = chart.title?.trim();
+      if (!title) return false;
+      return clauseLower.includes(title.toLowerCase());
+    });
+    if (!entry?.title) continue;
+    const current = currentItems.get(entry.id);
+    const widthMatch =
+      clause.match(/ocupa\s+(\d+)\s*columna/i) ??
+      clause.match(/occup(?:y|ies)\s+(\d+)\s*column/i);
+    const w = Math.max(1, Math.min(columns, Number(widthMatch?.[1] ?? current?.w ?? preferredChartWidth(entry, columns))));
+    const h = wantsSingleRowHeight ? 1 : Math.max(1, current?.h ?? 2);
+    let x = current?.x ?? 0;
+    let y = current?.y ?? 0;
+    const anchorsTopRow = /(izquierda|left|derecha|right)/i.test(clause) && !/(debajo|below)/i.test(clause);
+
+    if (/(izquierda|left)/i.test(clause)) x = 0;
+    if (/(derecha|right)/i.test(clause)) x = Math.max(0, columns - w);
+    if (anchorsTopRow) y = 0;
+    if (/(debajo|below)/i.test(clause)) y = 1;
+
+    items.set(entry.id, { chart: entry.id, x, y, w, h });
+    mentionedChartIds.add(entry.id);
+  }
+  if (mentionedChartIds.size === 0) return undefined;
+
+  const occupied = new Set<string>();
+  const markOccupied = (item: Dashboard["layout"]["items"][number]) => {
+    for (let dx = 0; dx < item.w; dx += 1) {
+      for (let dy = 0; dy < item.h; dy += 1) {
+        occupied.add(`${item.x + dx}:${item.y + dy}`);
+      }
+    }
+  };
+  const canPlace = (x: number, y: number, w: number, h: number) => {
+    if (x < 0 || y < 0 || x + w > columns) return false;
+    for (let dx = 0; dx < w; dx += 1) {
+      for (let dy = 0; dy < h; dy += 1) {
+        if (occupied.has(`${x + dx}:${y + dy}`)) return false;
+      }
+    }
+    return true;
+  };
+
+  const specifiedItems = Array.from(items.values()).sort((left, right) => (left.y - right.y) || (left.x - right.x));
+  for (const item of specifiedItems) markOccupied(item);
+
+  const remainingCharts = dashboard.charts
+    .filter((chart) => !mentionedChartIds.has(chart.id))
+    .sort((left, right) => {
+      const leftItem = currentItems.get(left.id);
+      const rightItem = currentItems.get(right.id);
+      return ((leftItem?.y ?? 0) - (rightItem?.y ?? 0)) || ((leftItem?.x ?? 0) - (rightItem?.x ?? 0));
+    });
+
+  for (const chart of remainingCharts) {
+    const current = currentItems.get(chart.id);
+    const maxWidth = Math.max(1, Math.min(columns, current?.w ?? preferredChartWidth(chart, columns)));
+    const h = wantsSingleRowHeight ? 1 : Math.max(1, current?.h ?? 2);
+    let placed: Dashboard["layout"]["items"][number] | undefined;
+
+    for (let y = 0; y < Math.max(8, specifiedItems.length + remainingCharts.length + 1) && !placed; y += 1) {
+      for (let width = maxWidth; width >= 1 && !placed; width -= 1) {
+        for (let x = 0; x <= columns - width; x += 1) {
+          if (canPlace(x, y, width, h)) {
+            placed = { chart: chart.id, x, y, w: width, h };
+            break;
+          }
+        }
+      }
+    }
+
+    if (!placed) {
+      placed = { chart: chart.id, x: 0, y: computeRequiredGridRows(Array.from(items.values())), w: maxWidth, h };
+    }
+    items.set(chart.id, placed);
+    markOccupied(placed);
+  }
+
+  const layoutItems = sortLayoutItemsForPersistence(Array.from(items.values()), columns);
+  return {
+    grid: {
+      columns,
+      rows: computeRequiredGridRows(layoutItems)
+    },
+    items: layoutItems
+  };
+}
+
+function sortLayoutItemsForPersistence(
+  items: Dashboard["layout"]["items"],
+  columns: number
+): Dashboard["layout"]["items"] {
+  return items
+    .map((item) => ({
+      ...item,
+      w: Math.max(1, Math.min(columns, item.w)),
+      h: Math.max(1, item.h),
+      x: Math.max(0, Math.min(columns - Math.max(1, Math.min(columns, item.w)), item.x)),
+      y: Math.max(0, item.y)
+    }))
+    .sort((left, right) => (left.y - right.y) || (left.x - right.x) || left.chart.localeCompare(right.chart));
+}
+
 function extractDatasetNameFromRequest(request: string): string | undefined {
   const quoted =
     request.match(/dataset\s+["'`]?([^"'`]+)["'`]?/i) ??
@@ -4617,13 +4770,6 @@ export async function dashboardNl(input: unknown): Promise<{
   }
 
   if (/(columna|column|layout|grilla|grid)/.test(request) && /(\d+)\s*(column(s)?|columna(s)?)/.test(request)) {
-    const match =
-      parsed.request.match(/(\d+)\s*column(s)?/i) ?? parsed.request.match(/(\d+)\s*columna(s)?/i);
-    const columns = Number(match?.[1] ?? 0);
-    if (!columns || Number.isNaN(columns)) {
-      throw new Error("Could not infer number of columns from request.");
-    }
-
     let targetId = parsed.dashboardId;
     if (!targetId) {
       const candidateName = parsed.dashboardName ?? extractDashboardNameFromRequest(parsed.request);
@@ -4632,6 +4778,26 @@ export async function dashboardNl(input: unknown): Promise<{
     }
 
     const activeDashboardId = targetId ?? (await resolveDefaultDashboard(undefined));
+    const activeDashboard = (await listDashboards()).find((entry) => entry.id === activeDashboardId);
+    const explicitLayout =
+      activeDashboard && /(izquierda|left|derecha|right|debajo|below|ocupa|occup(?:y|ies)|fila|row)/i.test(request)
+        ? inferChartLayoutFromRequest(activeDashboard, parsed.request)
+        : undefined;
+    if (activeDashboard && explicitLayout) {
+      const dashboard = await setLayout({ dashboardId: activeDashboardId, layout: explicitLayout });
+      return {
+        action: "set_layout",
+        message: "Dashboard layout updated.",
+        result: dashboard
+      };
+    }
+
+    const match =
+      parsed.request.match(/(\d+)\s*column(s)?/i) ?? parsed.request.match(/(\d+)\s*columna(s)?/i);
+    const columns = Number(match?.[1] ?? 0);
+    if (!columns || Number.isNaN(columns)) {
+      throw new Error("Could not infer number of columns from request.");
+    }
     const dashboard = await setDashboardColumns({ dashboardId: activeDashboardId, columns });
     return {
       action: "set_dashboard_columns",
