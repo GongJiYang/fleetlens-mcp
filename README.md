@@ -33,7 +33,7 @@ Luminon is an AI-first dashboard builder with three pieces in one repo:
 ## 🚀 Quick start
 ```bash
 npx -y @luminondev/mcp-dashboard start                 # Start local renderer
-npx -y @luminondev/mcp-dashboard mcp --mode full        # MCP config for AI tools (Claude, Gemini, Codex, Perplexity)
+npx -y @luminondev/mcp-dashboard mcp --mode full        # MCP config for AI tools (Claude, Antigravity CLI, Codex, Perplexity)
 ```
 
 Modes:
