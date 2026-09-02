@@ -1151,7 +1151,7 @@
       "layout": {
         "grid": {
           "columns": 4,
-          "rows": 4
+          "rows": 5
         },
         "items": [
           {
@@ -1193,20 +1193,20 @@
             "chart": "fleetlens_segment_donut",
             "x": 2,
             "y": 1,
-            "w": 1,
+            "w": 2,
             "h": 1
           },
           {
             "chart": "fleetlens_month_bar",
-            "x": 3,
-            "y": 1,
-            "w": 1,
+            "x": 0,
+            "y": 2,
+            "w": 4,
             "h": 1
           },
           {
             "chart": "fleetlens_deal_table",
             "x": 0,
-            "y": 2,
+            "y": 3,
             "w": 4,
             "h": 2
           }

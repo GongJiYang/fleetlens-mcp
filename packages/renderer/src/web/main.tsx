@@ -2488,9 +2488,9 @@ function DashboardView({
           })}
         </div>
       )}
-      {activeSubtitle && (
+      {activePage?.subtitle && (
         <p className="luminon-page-subtitle">
-          {activeSubtitle}
+          {activePage.subtitle}
         </p>
       )}
       {storedFilters.length > 0 && (
@@ -3495,29 +3495,33 @@ function App() {
                       {selected.name}
                     </h1>
                     <div className="luminon-title-actions-inline">
-                      <button onClick={() => !isReadOnlyDemo && setEditingName(true)} className="luminon-rename-btn" disabled={isReadOnlyDemo}>
-                        <svg aria-hidden="true" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                        </svg>
-                        <span>Rename</span>
-                      </button>
+                      {!isReadOnlyDemo && (
+                        <button onClick={() => setEditingName(true)} className="luminon-rename-btn">
+                          <svg aria-hidden="true" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                          </svg>
+                          <span>Rename</span>
+                        </button>
+                      )}
                       <button
                         onClick={() => {
+                          if (isReadOnlyDemo) {
+                            void copyShareUrl(window.location.href);
+                            return;
+                          }
                           setShareOpen((open) => !open);
                         }}
                         className="luminon-action-btn"
-                        title="Open secure sharing options"
+                        title={isReadOnlyDemo ? "Copy this demo URL" : "Open secure sharing options"}
                       >
                         <svg aria-hidden="true" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
                         </svg>
-                        <span>
-                          Share
-                        </span>
+                        <span>{isReadOnlyDemo ? (shareNotice ? "Link copied" : "Copy demo link") : "Share"}</span>
                       </button>
                     </div>
                   </div>
-                  {shareOpen && selected && (
+                  {shareOpen && selected && !isReadOnlyDemo && (
                     <div className="luminon-share-panel">
                       <p className="luminon-share-title">Secure sharing</p>
                       <div className="luminon-share-create">
@@ -3568,7 +3572,7 @@ function App() {
                       <div className="luminon-pill">
                         <span className="luminon-pill-label">Status</span>
                         <span className="luminon-pill-value">
-                          {selected.published ? "Published" : "Private"} · {countDashboardCharts(selected)} charts · {countUniqueDatasets(selected)} datasets · id : {selected.id}
+                          {selected.published ? "Published" : "Private"} · {countDashboardCharts(selected)} charts · {countUniqueDatasets(selected)} {countUniqueDatasets(selected) === 1 ? "dataset" : "datasets"}{isReadOnlyDemo ? "" : ` · id: ${selected.id}`}
                         </span>
                       </div>
                   </div>
