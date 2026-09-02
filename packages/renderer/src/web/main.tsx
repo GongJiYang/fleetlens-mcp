@@ -2866,7 +2866,7 @@ function App() {
             <span>FORECAST SIGNAL</span>
             <span className="fleetlens-live">LIVE</span>
           </div>
-          <div className="fleetlens-signal-value">$559K</div>
+          <div className="fleetlens-signal-value">$599K</div>
           <div className="fleetlens-signal-label">weighted forecast</div>
           <div className="fleetlens-signal-track"><span /></div>
           <div className="fleetlens-signal-foot">
