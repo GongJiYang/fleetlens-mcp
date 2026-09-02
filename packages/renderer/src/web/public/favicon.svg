@@ -1,10 +1,6 @@
-<svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
-  <!-- Barra -->
-  <rect x="5" y="3" width="3" height="8" rx="1.5" fill="#AECF3B"/>
-
-  <!-- Base (lila) -->
-  <rect x="5" y="11" width="6" height="2" rx="1" fill="#A16AE8"/>
-
-  <!-- Punto -->
-  <circle cx="11" cy="5" r="2" fill="#FFB547"/>
+<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+  <rect width="32" height="32" rx="8" fill="#111b17"/>
+  <circle cx="16" cy="16" r="9" fill="none" stroke="#c7ec70" stroke-width="2.5"/>
+  <path d="M16 9v14M9 16h14" stroke="#f7fbf9" stroke-width="2" stroke-linecap="round"/>
+  <circle cx="16" cy="16" r="3" fill="#7f7aed"/>
 </svg>

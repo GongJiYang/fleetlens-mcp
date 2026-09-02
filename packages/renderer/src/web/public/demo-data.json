@@ -970,6 +970,281 @@
       "published": true,
       "createdAt": "2026-03-26T00:00:00.000Z",
       "updatedAt": "2026-03-26T00:00:00.000Z"
+    },
+    {
+      "id": "db_fleetlens_revenue",
+      "name": "FleetLens Revenue Command Center",
+      "subtitle": "A live operating view of pipeline health, forecast coverage, and the deals that need attention.",
+      "themePreset": "clean",
+      "presentation": {
+        "numberFormat": "compact",
+        "decimals": 0
+      },
+      "charts": [
+        {
+          "id": "fleetlens_pipeline_kpi",
+          "type": "kpi_card",
+          "title": "Open Pipeline",
+          "datasetId": "fleetlens_revenue_pipeline",
+          "value": 1050000,
+          "label": "total opportunity value",
+          "format": "currency",
+          "currency": "USD",
+          "presentation": {
+            "icon": "trend",
+            "decimals": 2
+          },
+          "source": {
+            "datasetId": "fleetlens_revenue_pipeline",
+            "valueField": "value",
+            "aggregation": "sum",
+            "format": "currency",
+            "currency": "USD"
+          }
+        },
+        {
+          "id": "fleetlens_weighted_kpi",
+          "type": "kpi_card",
+          "title": "Weighted Forecast",
+          "datasetId": "fleetlens_revenue_pipeline",
+          "value": 599000,
+          "label": "probability-adjusted",
+          "format": "currency",
+          "currency": "USD",
+          "presentation": {
+            "icon": "target",
+            "decimals": 0
+          },
+          "source": {
+            "datasetId": "fleetlens_revenue_pipeline",
+            "valueField": "weighted_value",
+            "aggregation": "sum",
+            "format": "currency",
+            "currency": "USD"
+          }
+        },
+        {
+          "id": "fleetlens_deals_kpi",
+          "type": "kpi_card",
+          "title": "Active Deals",
+          "datasetId": "fleetlens_revenue_pipeline",
+          "label": "open opportunities",
+          "format": "number",
+          "presentation": {
+            "icon": "pulse",
+            "decimals": 0
+          },
+          "source": {
+            "datasetId": "fleetlens_revenue_pipeline",
+            "valueField": "account",
+            "aggregation": "count",
+            "format": "number"
+          }
+        },
+        {
+          "id": "fleetlens_cycle_kpi",
+          "type": "kpi_card",
+          "title": "Average Deal Age",
+          "datasetId": "fleetlens_revenue_pipeline",
+          "label": "days in pipeline",
+          "format": "number",
+          "presentation": {
+            "icon": "users",
+            "decimals": 0
+          },
+          "source": {
+            "datasetId": "fleetlens_revenue_pipeline",
+            "valueField": "days_open",
+            "aggregation": "avg",
+            "format": "number"
+          }
+        },
+        {
+          "id": "fleetlens_stage_bar",
+          "type": "bar",
+          "title": "Pipeline Value by Stage",
+          "datasetId": "fleetlens_revenue_pipeline",
+          "x": "stage",
+          "y": "value",
+          "presentation": {
+            "numberFormat": "currency",
+            "currency": "USD",
+            "decimals": 0,
+            "showGrid": false,
+            "showLabels": true
+          },
+          "source": {
+            "datasetId": "fleetlens_revenue_pipeline",
+            "xField": "stage",
+            "yField": "value",
+            "aggregation": "sum"
+          }
+        },
+        {
+          "id": "fleetlens_segment_donut",
+          "type": "donut",
+          "title": "Pipeline Mix by Segment",
+          "datasetId": "fleetlens_revenue_pipeline",
+          "presentation": {
+            "numberFormat": "currency",
+            "currency": "USD",
+            "decimals": 0,
+            "showLegend": true
+          },
+          "source": {
+            "datasetId": "fleetlens_revenue_pipeline",
+            "categoryField": "segment",
+            "valueField": "value",
+            "aggregation": "sum"
+          }
+        },
+        {
+          "id": "fleetlens_month_bar",
+          "type": "bar",
+          "title": "Expected Close Value",
+          "datasetId": "fleetlens_revenue_pipeline",
+          "x": "close_month",
+          "y": "value",
+          "presentation": {
+            "numberFormat": "currency",
+            "currency": "USD",
+            "decimals": 0,
+            "showGrid": false
+          },
+          "source": {
+            "datasetId": "fleetlens_revenue_pipeline",
+            "xField": "close_month",
+            "yField": "value",
+            "aggregation": "sum"
+          }
+        },
+        {
+          "id": "fleetlens_deal_table",
+          "type": "table",
+          "title": "Deals Requiring Action",
+          "datasetId": "fleetlens_revenue_pipeline",
+          "columns": [
+            "account",
+            "owner",
+            "stage",
+            "value",
+            "probability",
+            "days_open",
+            "next_step"
+          ],
+          "limit": 12,
+          "source": {
+            "datasetId": "fleetlens_revenue_pipeline",
+            "columns": [
+              "account",
+              "owner",
+              "stage",
+              "value",
+              "probability",
+              "days_open",
+              "next_step"
+            ],
+            "limit": 12
+          }
+        }
+      ],
+      "layout": {
+        "grid": {
+          "columns": 4,
+          "rows": 4
+        },
+        "items": [
+          {
+            "chart": "fleetlens_pipeline_kpi",
+            "x": 0,
+            "y": 0,
+            "w": 1,
+            "h": 1
+          },
+          {
+            "chart": "fleetlens_weighted_kpi",
+            "x": 1,
+            "y": 0,
+            "w": 1,
+            "h": 1
+          },
+          {
+            "chart": "fleetlens_deals_kpi",
+            "x": 2,
+            "y": 0,
+            "w": 1,
+            "h": 1
+          },
+          {
+            "chart": "fleetlens_cycle_kpi",
+            "x": 3,
+            "y": 0,
+            "w": 1,
+            "h": 1
+          },
+          {
+            "chart": "fleetlens_stage_bar",
+            "x": 0,
+            "y": 1,
+            "w": 2,
+            "h": 1
+          },
+          {
+            "chart": "fleetlens_segment_donut",
+            "x": 2,
+            "y": 1,
+            "w": 1,
+            "h": 1
+          },
+          {
+            "chart": "fleetlens_month_bar",
+            "x": 3,
+            "y": 1,
+            "w": 1,
+            "h": 1
+          },
+          {
+            "chart": "fleetlens_deal_table",
+            "x": 0,
+            "y": 2,
+            "w": 4,
+            "h": 2
+          }
+        ]
+      },
+      "filters": [
+        {
+          "id": "filter_owner",
+          "field": "owner",
+          "fieldType": "string",
+          "op": "eq",
+          "value": ""
+        },
+        {
+          "id": "filter_stage",
+          "field": "stage",
+          "fieldType": "string",
+          "op": "eq",
+          "value": ""
+        },
+        {
+          "id": "filter_segment",
+          "field": "segment",
+          "fieldType": "string",
+          "op": "eq",
+          "value": ""
+        },
+        {
+          "id": "filter_region",
+          "field": "region",
+          "fieldType": "string",
+          "op": "eq",
+          "value": ""
+        }
+      ],
+      "published": true,
+      "createdAt": "2026-09-02T00:00:00.000Z",
+      "updatedAt": "2026-09-02T00:00:00.000Z"
     }
   ],
   "datasets": [
@@ -20616,6 +20891,184 @@
       ],
       "createdAt": "2026-03-26T00:00:00.000Z",
       "updatedAt": "2026-03-26T00:00:00.000Z",
+      "readOnly": false
+    },
+    {
+      "id": "fleetlens_revenue_pipeline",
+      "name": "fleetlens_revenue_pipeline",
+      "columns": [
+        "account",
+        "owner",
+        "stage",
+        "segment",
+        "region",
+        "value",
+        "probability",
+        "weighted_value",
+        "days_open",
+        "close_month",
+        "next_step"
+      ],
+      "rows": [
+        {
+          "account": "Northstar Health",
+          "owner": "Maya Chen",
+          "stage": "Negotiation",
+          "segment": "Enterprise",
+          "region": "North America",
+          "value": 142000,
+          "probability": 80,
+          "weighted_value": 113600,
+          "days_open": 34,
+          "close_month": "Sep",
+          "next_step": "Security review"
+        },
+        {
+          "account": "Orbit Logistics",
+          "owner": "Jon Bell",
+          "stage": "Proposal",
+          "segment": "Mid-market",
+          "region": "Europe",
+          "value": 78000,
+          "probability": 60,
+          "weighted_value": 46800,
+          "days_open": 27,
+          "close_month": "Sep",
+          "next_step": "Pricing call"
+        },
+        {
+          "account": "Summit Foods",
+          "owner": "Priya Shah",
+          "stage": "Qualified",
+          "segment": "Enterprise",
+          "region": "North America",
+          "value": 119000,
+          "probability": 40,
+          "weighted_value": 47600,
+          "days_open": 19,
+          "close_month": "Oct",
+          "next_step": "Technical discovery"
+        },
+        {
+          "account": "Vertex Energy",
+          "owner": "Maya Chen",
+          "stage": "Negotiation",
+          "segment": "Enterprise",
+          "region": "Europe",
+          "value": 164000,
+          "probability": 85,
+          "weighted_value": 139400,
+          "days_open": 41,
+          "close_month": "Sep",
+          "next_step": "Legal redlines"
+        },
+        {
+          "account": "Cedar Finance",
+          "owner": "Luis Ortega",
+          "stage": "Proposal",
+          "segment": "Mid-market",
+          "region": "North America",
+          "value": 69000,
+          "probability": 55,
+          "weighted_value": 37950,
+          "days_open": 23,
+          "close_month": "Oct",
+          "next_step": "Executive sponsor"
+        },
+        {
+          "account": "Beacon Retail",
+          "owner": "Jon Bell",
+          "stage": "Discovery",
+          "segment": "SMB",
+          "region": "Europe",
+          "value": 32000,
+          "probability": 25,
+          "weighted_value": 8000,
+          "days_open": 12,
+          "close_month": "Nov",
+          "next_step": "Workflow mapping"
+        },
+        {
+          "account": "Atlas Mobility",
+          "owner": "Priya Shah",
+          "stage": "Qualified",
+          "segment": "Mid-market",
+          "region": "Asia Pacific",
+          "value": 87000,
+          "probability": 45,
+          "weighted_value": 39150,
+          "days_open": 16,
+          "close_month": "Oct",
+          "next_step": "Data sample"
+        },
+        {
+          "account": "Harbor Systems",
+          "owner": "Luis Ortega",
+          "stage": "Discovery",
+          "segment": "Enterprise",
+          "region": "North America",
+          "value": 105000,
+          "probability": 20,
+          "weighted_value": 21000,
+          "days_open": 9,
+          "close_month": "Nov",
+          "next_step": "Stakeholder interview"
+        },
+        {
+          "account": "Pioneer Labs",
+          "owner": "Maya Chen",
+          "stage": "Proposal",
+          "segment": "SMB",
+          "region": "Asia Pacific",
+          "value": 41000,
+          "probability": 65,
+          "weighted_value": 26650,
+          "days_open": 31,
+          "close_month": "Sep",
+          "next_step": "Procurement form"
+        },
+        {
+          "account": "Evergreen Media",
+          "owner": "Jon Bell",
+          "stage": "Qualified",
+          "segment": "SMB",
+          "region": "North America",
+          "value": 28000,
+          "probability": 35,
+          "weighted_value": 9800,
+          "days_open": 14,
+          "close_month": "Nov",
+          "next_step": "ROI workshop"
+        },
+        {
+          "account": "Nova Telecom",
+          "owner": "Priya Shah",
+          "stage": "Negotiation",
+          "segment": "Enterprise",
+          "region": "Asia Pacific",
+          "value": 131000,
+          "probability": 75,
+          "weighted_value": 98250,
+          "days_open": 38,
+          "close_month": "Oct",
+          "next_step": "Implementation plan"
+        },
+        {
+          "account": "Lumen Education",
+          "owner": "Luis Ortega",
+          "stage": "Discovery",
+          "segment": "Mid-market",
+          "region": "Europe",
+          "value": 54000,
+          "probability": 20,
+          "weighted_value": 10800,
+          "days_open": 7,
+          "close_month": "Nov",
+          "next_step": "Use-case review"
+        }
+      ],
+      "createdAt": "2026-09-02T00:00:00.000Z",
+      "updatedAt": "2026-09-02T00:00:00.000Z",
       "readOnly": false
     }
   ]

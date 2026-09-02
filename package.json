@@ -27,7 +27,6 @@
     "bin/luminon.js"
   ],
   "dependencies": {
-    "@luminondev/mcp-dashboard": "^0.9.24",
     "@modelcontextprotocol/sdk": "^1.11.0",
     "cors": "^2.8.5",
     "express": "^4.21.1",

@@ -92,15 +92,12 @@ type QuickstartGuide = {
 };
 
 const QUICK_PROMPTS = [
-  { title: "List dashboards", text: "List all dashboards available" },
-  { title: "List datasets", text: "List all datasets available" },
-  { title: "List themes", text: "List all available themes" },
-  { title: "Marketing details", text: "Show details for the \"Marketing Campaign Command Center\" dashboard" },
-  { title: "Marketing dataset", text: "Show the dataset used by the \"Marketing Campaign Command Center\" dashboard" },
-  { title: "Swap charts", text: "Swap the charts \"Spend and Revenue by Period\" and \"Sales Share by Category\" in the \"Sales Performance Hub\" dashboard" },
-  { title: "Columns", text: "Set the chart \"Sales by Country and Channel\" in \"Sales Performance Hub\" to two columns" },
-  { title: "Chart theme", text: "Change the chart \"Spend and Revenue by Period\" to the clean theme" },
-  { title: "Dashboard theme", text: "Change the dashboard \"Sales Performance Hub\" to the dark_analytics theme" }
+  { title: "Open revenue view", text: "Show the \"FleetLens Revenue Command Center\" dashboard" },
+  { title: "Inspect pipeline data", text: "Show the dataset used by the \"FleetLens Revenue Command Center\" dashboard" },
+  { title: "Focus negotiation", text: "Filter the \"FleetLens Revenue Command Center\" dashboard to Negotiation stage deals" },
+  { title: "Focus enterprise", text: "Filter the \"FleetLens Revenue Command Center\" dashboard to Enterprise segment deals" },
+  { title: "Reframe forecast", text: "Change the \"Expected Close Value\" chart in \"FleetLens Revenue Command Center\" to a line chart" },
+  { title: "Executive theme", text: "Change the \"FleetLens Revenue Command Center\" dashboard to the dark_analytics theme" }
 ];
 
 // Keep this quickstart copy aligned with the published documentation and landing page.
@@ -118,32 +115,32 @@ const QUICKSTART_GUIDES: QuickstartGuide[] = [
   {
     id: "claude-desktop",
     title: "Claude Desktop",
-    description: "Add Luminon to Claude Desktop as a local stdio MCP server, then restart Claude.",
+    description: "Add the FleetLens MCP backend to Claude Desktop, then restart Claude.",
     pathLabel: "Default config path",
     pathValue:
       "macOS: ~/Library/Application Support/Claude/claude_desktop_config.json | Windows: %APPDATA%/Claude/claude_desktop_config.json",
     note: "If you already have other MCP servers configured, merge this inside your existing mcpServers object.",
-    code: `{\n  \"mcpServers\": {\n    \"luminon\": {\n      \"command\": \"npx\",\n      \"args\": [\"-y\", \"@luminondev/mcp-dashboard\", \"mcp\"]\n    }\n  }\n}`,
+    code: `{\n  \"mcpServers\": {\n    \"fleetlens\": {\n      \"command\": \"npx\",\n      \"args\": [\"-y\", \"@luminondev/mcp-dashboard\", \"mcp\"]\n    }\n  }\n}`,
     codeLang: "json"
   },
   {
     id: "gemini-cli",
     title: "Gemini CLI",
-    description: "Add Luminon to your Gemini CLI settings so it starts automatically as an MCP server.",
+    description: "Add the FleetLens MCP backend to Gemini CLI so it starts automatically.",
     pathLabel: "Default config path",
     pathValue: "macOS/Linux: ~/.gemini/settings.json | Windows: %USERPROFILE%\\\\.gemini\\\\settings.json",
-    note: "Keep any existing Gemini CLI settings and add luminon under mcpServers.",
-    code: `{\n  \"mcpServers\": {\n    \"luminon\": {\n      \"command\": \"npx\",\n      \"args\": [\"-y\", \"@luminondev/mcp-dashboard\", \"mcp\"]\n    }\n  }\n}`,
+    note: "Keep any existing Gemini CLI settings and add fleetlens under mcpServers.",
+    code: `{\n  \"mcpServers\": {\n    \"fleetlens\": {\n      \"command\": \"npx\",\n      \"args\": [\"-y\", \"@luminondev/mcp-dashboard\", \"mcp\"]\n    }\n  }\n}`,
     codeLang: "json"
   },
   {
     id: "codex",
     title: "Codex",
-    description: "Configure Luminon in Codex once and reuse it from the CLI or the IDE extension.",
+    description: "Configure the FleetLens MCP backend once and reuse it from Codex CLI or the IDE extension.",
     pathLabel: "Default config path",
     pathValue: "~/.codex/config.toml",
     note: "Codex also supports adding MCP servers with commands, but the config file is the cleanest copy-paste setup.",
-    code: `[mcp_servers.luminon]\ncommand = \"npx\"\nargs = [\"-y\", \"@luminondev/mcp-dashboard\", \"mcp\"]`,
+    code: `[mcp_servers.fleetlens]\ncommand = \"npx\"\nargs = [\"-y\", \"@luminondev/mcp-dashboard\", \"mcp\"]`,
     codeLang: "toml"
   },
   {
@@ -921,7 +918,15 @@ function renderKpiCard(
         chart.label ?? "vs last period"
       }`.trim()
     : chart.label ?? "";
-  const valueText = formatNumericValue(chart.value, kpiPresentation);
+  const valueText =
+    chart.format === "currency" && dashboardPresentation?.numberFormat === "compact"
+      ? new Intl.NumberFormat("en-US", {
+          style: "currency",
+          currency: chart.currency ?? kpiPresentation.currency ?? "USD",
+          notation: "compact",
+          maximumFractionDigits: kpiPresentation.decimals
+        }).format(chart.value)
+      : formatNumericValue(chart.value, kpiPresentation);
   const valueFontSize = valueText.length > 14 ? 28 : valueText.length > 10 ? 32 : valueText.length > 7 ? 36 : 42;
   const surfaceIsDark = preset.surface === "dark";
   const textColor = presentation.titleColor ?? (surfaceIsDark ? "#f8fafc" : "#0f172a");
@@ -2807,8 +2812,8 @@ function App() {
     <button
       className="luminon-theme-toggle"
       onClick={cycleUiTheme}
-      title="Cambiar tema de la interfaz"
-      aria-label="Cambiar tema de la interfaz"
+      title="Change interface theme"
+      aria-label="Change interface theme"
       type="button"
     >
       <svg className="size-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
@@ -2835,13 +2840,80 @@ function App() {
 
   const Home = () => (
     <div className="luminon-home">
-      <h1 className="luminon-hero-title" style={{ marginBottom: 8 }}>Instant dashboards from your data</h1>
-      <p className="luminon-hero-sub" style={{ marginBottom: 24 }}>
-        Connect the MCP server, open the renderer, and ask your AI tool to arrange dashboards, charts, and themes automatically.
-      </p>
+      <section className="fleetlens-hero">
+        <div className="fleetlens-hero-copy">
+          <div className="fleetlens-kicker">AI-NATIVE REVENUE OPERATIONS</div>
+          <h1 className="luminon-hero-title">Turn one business question into a decision-ready dashboard.</h1>
+          <p className="luminon-hero-sub">
+            FleetLens connects through MCP, shapes raw operating data into a governed dataset, and publishes a live dashboard your team can act on.
+          </p>
+          <div className="fleetlens-hero-actions">
+            <button
+              type="button"
+              className="fleetlens-primary-action"
+              onClick={() => {
+                setSelectedId("db_fleetlens_revenue");
+                setShowHome(false);
+              }}
+            >
+              Open Revenue Command Center
+            </button>
+            <span className="fleetlens-proof">12 active deals · $1.05M pipeline · 4 operator filters</span>
+          </div>
+        </div>
+        <div className="fleetlens-signal-card" aria-label="Revenue pipeline summary">
+          <div className="fleetlens-signal-head">
+            <span>FORECAST SIGNAL</span>
+            <span className="fleetlens-live">LIVE</span>
+          </div>
+          <div className="fleetlens-signal-value">$559K</div>
+          <div className="fleetlens-signal-label">weighted forecast</div>
+          <div className="fleetlens-signal-track"><span /></div>
+          <div className="fleetlens-signal-foot">
+            <span>53% coverage</span>
+            <strong>+8.1%</strong>
+          </div>
+        </div>
+      </section>
+
+      <section className="fleetlens-workflow" aria-label="FleetLens workflow">
+        <div className="fleetlens-workflow-step">
+          <span>01</span>
+          <div><strong>Connect</strong><small>MCP or JSON data source</small></div>
+        </div>
+        <div className="fleetlens-workflow-arrow">→</div>
+        <div className="fleetlens-workflow-step">
+          <span>02</span>
+          <div><strong>Model</strong><small>Typed dataset and filters</small></div>
+        </div>
+        <div className="fleetlens-workflow-arrow">→</div>
+        <div className="fleetlens-workflow-step">
+          <span>03</span>
+          <div><strong>Decide</strong><small>Publish an operator view</small></div>
+        </div>
+      </section>
+
+      <div className="fleetlens-capability-grid">
+        <article className="fleetlens-capability">
+          <div className="fleetlens-capability-index">01 / MCP</div>
+          <h3>Agent-ready data access</h3>
+          <p>Expose dashboards, datasets, themes, and editing actions as typed MCP tools instead of another brittle integration.</p>
+        </article>
+        <article className="fleetlens-capability">
+          <div className="fleetlens-capability-index">02 / GOVERNANCE</div>
+          <h3>Controlled from source to share</h3>
+          <p>Validate every dashboard contract, keep datasets local, and separate published views from editable workspaces.</p>
+        </article>
+        <article className="fleetlens-capability">
+          <div className="fleetlens-capability-index">03 / OPERATIONS</div>
+          <h3>Built for the next action</h3>
+          <p>Combine executive KPIs with owner, stage, segment, and region filters so the operating path stays visible.</p>
+        </article>
+      </div>
 
       <div className="luminon-home-grid">
         <section className="luminon-home-card">
+          <div className="fleetlens-section-label">CONNECT YOUR AI CLIENT</div>
           <div className="luminon-tabs">
             {QUICKSTART_GUIDES.map((guide) => (
               <button
@@ -2885,19 +2957,20 @@ function App() {
         </section>
 
         <section className="luminon-home-card">
-            <h3>Quick prompts</h3>
-            <div className="luminon-prompt-list">
-              {QUICK_PROMPTS.map((item) => (
-                <div key={item.title} className="luminon-prompt-card">
-                  <div className="luminon-prompt-content">
-                    <div className="luminon-prompt-title">{item.title}</div>
-                    <div className="luminon-prompt-text">{item.text}</div>
-                  </div>
-                  <button
-                    type="button"
-                    className="luminon-copy-btn"
-                    onClick={() => navigator.clipboard?.writeText(item.text).catch(() => {})}
-                    aria-label={`Copy prompt: ${item.title}`}
+          <div className="fleetlens-section-label">ASK FLEETLENS</div>
+          <h3>Quick prompts</h3>
+          <div className="luminon-prompt-list">
+            {QUICK_PROMPTS.map((item) => (
+              <div key={item.title} className="luminon-prompt-card">
+                <div className="luminon-prompt-content">
+                  <div className="luminon-prompt-title">{item.title}</div>
+                  <div className="luminon-prompt-text">{item.text}</div>
+                </div>
+                <button
+                  type="button"
+                  className="luminon-copy-btn"
+                  onClick={() => navigator.clipboard?.writeText(item.text).catch(() => {})}
+                  aria-label={`Copy prompt: ${item.title}`}
                 >
                   <svg className="luminon-copy-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor">
                     <rect x="9" y="7" width="11" height="13" rx="2" ry="2" />
@@ -3208,9 +3281,9 @@ function App() {
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <div className="luminon-brand-logo">
-                  <img src={breezeLogoUrl} alt="Luminon logo" />
+                  <img src={breezeLogoUrl} alt="FleetLens logo" />
                 </div>
-                {!collapsed && <h2 className="luminon-brand-title">Luminon</h2>}
+                {!collapsed && <h2 className="luminon-brand-title">FleetLens</h2>}
               </div>
             </button>
             <button onClick={() => setCollapsed(!collapsed)} className="luminon-collapse-btn">
@@ -3225,7 +3298,7 @@ function App() {
               ×
             </button>
           </div>
-          {!collapsed && <p className="luminon-brand-sub">Instant dashboards from your data</p>}
+          {!collapsed && <p className="luminon-brand-sub">Revenue intelligence, built live</p>}
           {!collapsed && <div className="luminon-search-wrap">
             <span className="luminon-search-icon" aria-hidden="true">
               ⌕
@@ -3365,11 +3438,11 @@ function App() {
               <span className="luminon-mobile-nav-icon" aria-hidden="true">☰</span>
               <div className="luminon-mobile-brand">
                 <div className="luminon-brand-logo luminon-brand-logo--sm">
-                  <img src={breezeLogoUrl} alt="Luminon logo" />
+                  <img src={breezeLogoUrl} alt="FleetLens logo" />
                 </div>
                 <div className="luminon-mobile-brand-copy">
-                  <div className="luminon-brand-title luminon-brand-title--sm">Luminon</div>
-                  <div className="luminon-brand-sub luminon-brand-sub--sm">Instant dashboards from your data</div>
+                  <div className="luminon-brand-title luminon-brand-title--sm">FleetLens</div>
+                  <div className="luminon-brand-sub luminon-brand-sub--sm">Revenue intelligence, built live</div>
                 </div>
               </div>
             </button>

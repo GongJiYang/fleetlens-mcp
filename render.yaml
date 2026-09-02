@@ -1,0 +1,6 @@
+services:
+  - type: web
+    name: fleetlens-revenue-demo
+    runtime: static
+    buildCommand: npm ci && npm run build -w @mcp-dashboard/renderer
+    staticPublishPath: ./packages/renderer/dist/web

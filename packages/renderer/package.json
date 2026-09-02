@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "npm run build -w @mcp-dashboard/shared && node ./scripts/clean-dist.mjs && node ./scripts/generate-static-demo.mjs && tsc -p tsconfig.server.json && vite build --config vite.config.ts",
+    "build": "npm run build -w @mcp-dashboard/shared && npm run build -w @mcp-dashboard/core && node ./scripts/clean-dist.mjs && node ./scripts/generate-static-demo.mjs && tsc -p tsconfig.server.json && VITE_STATIC_DEMO=true vite build --config vite.config.ts",
     "dev": "concurrently \"npm:dev:api\" \"npm:dev:web\"",
     "dev:api": "tsx src/api-server.ts",
     "dev:web": "vite --config vite.config.ts"
