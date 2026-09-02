@@ -12,6 +12,8 @@ Demo: [demo.luminon.dev](https://demo.luminon.dev) (renderer)
 [![MIT](https://img.shields.io/github/license/luminondev/luminon-mcp-dashboard)](LICENSE)
 
 </div>
+> **Portfolio build:** [Open the FleetLens Revenue Command Center](https://gongjiyang.github.io/fleetlens-mcp/) · [View the implementation](https://github.com/GongJiYang/fleetlens-mcp)
+
 
 Luminon is an AI-first dashboard builder with three pieces in one repo:
 
