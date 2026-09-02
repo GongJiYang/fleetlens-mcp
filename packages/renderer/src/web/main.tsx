@@ -34,7 +34,7 @@ let staticDataPromise: Promise<{ dashboards: Dashboard[]; datasets: Dataset[] }>
 
 async function loadStaticData(): Promise<{ dashboards: Dashboard[]; datasets: Dataset[] }> {
   if (!staticDataPromise) {
-    staticDataPromise = fetch("/demo-data.json").then(async (res) => {
+    staticDataPromise = fetch("./demo-data.json").then(async (res) => {
       const payload = (await res.json()) as { dashboards?: Dashboard[]; datasets?: Dataset[] };
       return {
         dashboards: (payload.dashboards ?? []).map((dashboard) => dashboardSchema.parse(dashboard)),
